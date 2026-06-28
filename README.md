@@ -2,14 +2,22 @@ This software and instructions are [provided as is](LICENSE), without warranty o
 
 This is a fork created by Alan Merry and includes changes to the Nextion display to cater for a 7 inch diaplay and changes to the sketch as follows:-
 
+
 //alan.  Change axis button text colour to yellow when it is disabled by pressing the Axis Letter
+
 //alan1. Add a Unit Confirmation Change, press Unit Button within 3 secs to confirm the change. Otherwise it will revert to the original Units.
+
 //alan2. Resolve the joystick not respecting the move limits when the Z Axis Joystick is inverted. This is despite the fact that the Joystick moves correctly.
          The Z Pulse sign is restored.
+
 //alan3. Limit Joystick moves to a single axis, the first big move takes priority.
+
 //alan4. After all power ons, display the Software version and IP address until the play button is pressed. This is after the wifi configuration has been completed
+
 //alan5. Add new Web UI Page to display all of the Pref Settings on a single page. This faciltates easy output of all of the Pref Settings as a report
+
 //alan6. Amend the diameter display so the correct diameter is displayed after the diameter has been entered by pressing button tx, this was previously doubling the diameter. 
+
 
 The assumption with this fork is that the Nextion Touch screen is deplyed as the sole data entry method.
 
