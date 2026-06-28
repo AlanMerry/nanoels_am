@@ -6,7 +6,7 @@ Latest version of the electronic lead screw controller for metal lathes - https:
 
 ## Parts list
 
-- 67€ Nextion 5 inch display [NX8048P050 011C Y](https://www.aliexpress.com/item/1005002457232503.html)
+- Nextion 7 inch display [NEXTION 7.0'' Intelligent Resistive/Capacitive LCD Touch Display NX8048P070-011C/R-Y Multifunction HMI Module With Enclosure option Color: NX8048P070-011C-Y]  (https://www.aliexpress.com/item/4000166343931.html)
 - 10€ [5V 2A non-USB power adapter](https://www.amazon.de/dp/B09KNFD38L)
 - 5€ [ESP32-S3 N16R8 weld](https://www.aliexpress.com/item/1005005051294262.html)
 - 2€ [SN74HCT245N](https://www.aliexpress.com/item/1005007118898020.html) - pack of 10, we only need 2
