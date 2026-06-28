@@ -19,12 +19,6 @@ See [h5 folder for hardware files, software and assembly](https://github.com/Ala
 
 ## Build examples
 
-- [fmw626](https://github.com/kachurovskiy/nanoels/discussions/123)
-- [Kissys](https://github.com/kachurovskiy/nanoels/discussions/121)
-
-
-## Build examples
-
 - [EdFleta](https://github.com/kachurovskiy/nanoels/discussions/87)
 - [fmw626](https://github.com/kachurovskiy/nanoels/discussions/118)
 - [Johannmupa](https://github.com/kachurovskiy/nanoels/discussions/89)
