@@ -14,7 +14,7 @@ CNC and electronic lead screw controller based on ESP32-S3 that supports up to 3
 
 ![image](https://github.com/user-attachments/assets/de30c2ee-14d5-483a-b23d-0edc43125bd0)
 
-See [h5 folder for hardware files, software and assembly](https://github.com/kachurovskiy/nanoels/tree/main/h5).
+See [h5 folder for hardware files, software and assembly](https://github.com/AlanMerry/nanoels_am/tree/main/h5).
 
 # NanoEls H4
 
