@@ -83,6 +83,15 @@ const char* WIFI_SETUP_AP_PASSWORD = "nanoels-h5";
 const long INCOMING_BUFFER_SIZE = 100000;
 const long OUTGOING_BUFFER_SIZE = 100000;
 
+//alan New Change Unit Confirmation
+
+bool confirmMeasureChange = false;
+unsigned long confirmMeasureTime = 0;
+
+//alan
+
+
+
 /* Changing anything below shouldn't be needed for basic use. */
 
 // Configuration for axis connected to Y. This is uncommon. Dividing head (C) motor parameters.
@@ -127,7 +136,10 @@ const unsigned long HANDWHEEL_PULSE_WAIT_MS = 20; // Keep fast handwheel pulses 
 const bool DEFAULT_JOYSTICK_ENABLED = false;
 const bool DEFAULT_JOYSTICK_Z_ENABLED = true;
 const bool DEFAULT_JOYSTICK_X_ENABLED = true;
-const bool DEFAULT_JOYSTICK_Y_ENABLED = true;
+//alan4
+//alan4 const bool DEFAULT_JOYSTICK_Y_ENABLED = true;
+const bool DEFAULT_JOYSTICK_Y_ENABLED = false;
+//alan4
 const bool DEFAULT_JOYSTICK_BUTTON_TOGGLES_ON_OFF = false;
 const int DEFAULT_JOYSTICK_CENTER_SAMPLES = 64;
 const int DEFAULT_JOYSTICK_OVERSAMPLES = 4;
@@ -197,8 +209,9 @@ const bool SPINDLE_PAUSES_GCODE = true; // pause GCode execution when spindle st
 const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 
 // To be incremented whenever a measurable improvement is made.
-#define SOFTWARE_VERSION 35
-
+//alan4
+#define SOFTWARE_VERSION 3504
+//alan4
 // To be changed whenever a different PCB / encoder / stepper / ... design is used.
 #define HARDWARE_VERSION 5
 
@@ -1319,6 +1332,9 @@ const char indexhtml[] PROGMEM = R"rawliteral(
       <a href="#settings" data-section-link="settings">Settings</a>
       <a href="#keyboard" data-section-link="keyboard">Keyboard</a>
       <a href="#logs" data-section-link="logs">Logs</a>
+      <!--alan5-->
+      <a href="#prefs" data-section-link="prefs">Settings Summary</a>
+      <!--alan5-->
     </nav>
 
     <main>
@@ -1643,7 +1659,15 @@ const char indexhtml[] PROGMEM = R"rawliteral(
           </div>
         </form>
       </section>
-
+<!--alan5-->
+<section id="section-prefs" class="app-section" data-section="prefs">
+  <section class="panel">
+    <h3>All Settings</h3>
+    <p class="config-help">Read-only summary of all values currently saved in the settings pages.</p>
+    <div id="prefs-summary"></div>
+  </section>
+<!--alan5-->
+</section>
       <section id="section-keyboard" class="app-section" data-section="keyboard">
         <form id="keyboard-form">
           <section class="config-section">
@@ -1730,6 +1754,9 @@ const char indexhtml[] PROGMEM = R"rawliteral(
         return controlActionStatusElements.length > 0 ? controlActionStatusElements[0].textContent : '';
       }
     };
+    //alan5
+    const prefsSummary = document.getElementById('prefs-summary');
+    //alan5
     const log = document.getElementById('log');
     const commandInput = document.getElementById('command');
     const sendButton = document.getElementById('send');
@@ -3037,6 +3064,53 @@ const char indexhtml[] PROGMEM = R"rawliteral(
         }
       });
     }
+  //alan5
+    function renderPrefsSummary(values) {
+  if (!prefsSummary) return;
+  prefsSummary.innerHTML = '';
+
+  machineConfigSections.forEach(section => {
+    const sectionElement = document.createElement('details');
+    sectionElement.className = 'config-section settings-group';
+    sectionElement.open = true;
+
+    const summary = document.createElement('summary');
+    summary.textContent = `${section.title} (${section.fields.length})`;
+
+    const grid = document.createElement('div');
+    grid.className = 'config-grid';
+
+    section.fields.forEach(field => {
+      const row = document.createElement('div');
+      row.className = 'config-field';
+
+      const label = document.createElement('div');
+      label.className = 'config-label';
+      label.textContent = field.label;
+
+      const value = document.createElement('div');
+      value.className = 'config-help';
+
+      let rawValue = values[field.key] || '';
+
+      if (field.type === 'checkbox') {
+        value.textContent = rawValue === '1' ? 'Yes' : 'No';
+      } else {
+        value.textContent = configValueToDisplay(field, rawValue);
+        if (field.unit) value.textContent += ` ${field.unit}`;
+      }
+
+      row.appendChild(label);
+      row.appendChild(value);
+      grid.appendChild(row);
+    });
+
+    sectionElement.appendChild(summary);
+    sectionElement.appendChild(grid);
+    prefsSummary.appendChild(sectionElement);
+  });
+}
+//alan5
 
     function loadConfig() {
       configStatus.textContent = 'Loading machine config...';
@@ -3046,6 +3120,8 @@ const char indexhtml[] PROGMEM = R"rawliteral(
           const values = parseKeyValueText(data);
           applyConfigValues(values);
           applyControlConfigValues(values);
+           renderPrefsSummary(values);
+//alan5
           configStatus.textContent = '';
         })
         .catch(() => {
@@ -4090,8 +4166,11 @@ WebSocketsServer webSocket(81);
 volatile int webSocketClientCount = 0;
 volatile bool machineStatusForcePublish = false;
 String lastMachineStatus = "";
+//alan4
 String wifiStatus = "No WiFi";
 unsigned long wifiStatusMillis = 0;
+bool startupInfoActive = true;
+//alan4
 bool wifiSetupApActive = false;
 bool wifiStationConnected = false;
 String wifiIpAddress = "";
@@ -5820,7 +5899,9 @@ bool connectStationWifi() {
 
   wifiStationConnected = true;
   wifiIpAddress = WiFi.localIP().toString();
-  setWiFiStatus("See " + wifiIpAddress);
+  //alan4 setWiFiStatus("See " + wifiIpAddress);
+  setWiFiStatus(String(CONTROLLER_VERSION_TEXT) + " See " + wifiIpAddress);
+  //alan4
   Serial.print("Web UI: http://");
   Serial.println(wifiIpAddress);
   return true;
@@ -5838,7 +5919,9 @@ bool startSetupAccessPoint() {
   }
 
   wifiIpAddress = WiFi.softAPIP().toString();
-  setWiFiStatus("Setup " + wifiIpAddress);
+  //alan4 setWiFiStatus("Setup " + wifiIpAddress);
+  setWiFiStatus(String(CONTROLLER_VERSION_TEXT) + " Setup " + wifiIpAddress);
+  //alan4
   Serial.print("Setup AP: ");
   Serial.print(WIFI_SETUP_AP_SSID);
   Serial.print(" / ");
@@ -5913,6 +5996,9 @@ void setEmergencyStop(int kind) {
   xSemaphoreTake(y.mutex, 10);
 }
 
+
+//alan2 change axis button text colour when it is disabled
+
 void updateEnable(Axis* a) {
   if (!a->disabled && (!a->needsRest || a->stepperEnableCounter > 0)) {
     digitalWrite(a->ena, a->invertEnable ? LOW : HIGH);
@@ -5921,7 +6007,20 @@ void updateEnable(Axis* a) {
   } else {
     digitalWrite(a->ena, a->invertEnable ? HIGH : LOW);
   }
+
+  if (a == &x) {
+    writeNextionCommandRaw(x.disabled ? "bX.pco=61413" : "bX.pco=65535");
+  }
+
+  if (a == &z) {
+    writeNextionCommandRaw(z.disabled ? "bZ.pco=61413" : "bZ.pco=65535");
+  }
+
+  if (a == &y) {
+    writeNextionCommandRaw(y.disabled ? "bY.pco=61413" : "bY.pco=65535");
+  }
 }
+//alan2
 
 void stepperEnable(Axis* a, bool value) {
   if (!a->needsRest || !a->active) {
@@ -6361,8 +6460,14 @@ unsigned long getDisplayUpdateIntervalMs() {
   return webUiIsConnected() ? NEXTION_WEB_UPDATE_INTERVAL_MS : NEXTION_UPDATE_INTERVAL_MS;
 }
 
+//alan4String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int pitchStatusDirection) {
+//alan4  String result = "";
+//alan4
 String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int pitchStatusDirection) {
+  if (startupInfoActive) return wifiStatus;
+
   String result = "";
+//alan4
   if (mode != MODE_JOYSTICK && pitchStatusDirection > 0) {
     result = "Pitch +";
   } else if (mode != MODE_JOYSTICK && pitchStatusDirection < 0) {
@@ -6457,8 +6562,19 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
 
   if (inNumpad && result == "") result = "Use " + printDupr(numpadToDeciMicrons()) + "?";
 
-  if (result == "" && (millis() - wifiStatusMillis < 7000 || !x.active || x.disabled)) result = wifiStatus;
+  //alan4
 
+  if (result == "" && JOYSTICK_ENABLED && !joystickAvailable) {
+  result = joystickStartupWarning.length() > 0
+    ? joystickStartupWarning
+    : "Joystick not connected";
+}
+//alan4
+
+//alan4  if (result == "" && (millis() - wifiStatusMillis < 7000 || !x.active || x.disabled)) result = wifiStatus;
+//alan4
+  if (result == "" && (startupInfoActive || !x.active || x.disabled)) result = wifiStatus;
+//alan4
   if (result == "" && x.active && !x.disabled) result = "Diameter " + printDeciMicrons(abs(2 * getAxisPosDu(&x)), 2);
 
   return result;
@@ -6592,6 +6708,8 @@ void updateDisplay() {
     zLeftText = !z.active || z.disabled ? "" : printDistanceToLeftStop(&z);
     zRightText = !z.active || z.disabled ? "" : printDistanceToRightStop(&z);
   }
+
+//alan2 hold the axis button text colour to show that the axis is disabled
   if (updateLine2) {
     lcdHashLine2 = newHashLine2;
     setText("tX", xText);
@@ -6603,7 +6721,15 @@ void updateDisplay() {
     setText("tZ", zText);
     setText("tZLeft", zLeftText);
     setText("tZRight", zRightText);
+
+    writeNextionCommandRaw(x.disabled ? "bX.pco=61413" : "bX.pco=65535");
+    writeNextionCommandRaw(z.disabled ? "bZ.pco=61413" : "bZ.pco=65535");
+
+#if ACTIVE_Y
+    writeNextionCommandRaw(y.disabled ? "bY.pco=61413" : "bY.pco=65535");
+#endif
   }
+//alan2
 
   long numpadResult = getNumpadResult();
   long gcodeCommandHash = 0;
@@ -7034,7 +7160,14 @@ float getJoystickDeflection(JoystickAxisState* joystickAxis) {
   }
 
   int delta = joystickAxis->filtered - joystickAxis->center;
+  //alan3 if (*joystickAxis->invert) delta = -delta;
+  //alan3
   if (*joystickAxis->invert) delta = -delta;
+
+// Alan3: Z joystick moves correctly with invert enabled,
+// alan3 but Z joystick limits are reversed, so restore Z pulse sign only.
+   if (joystickAxis->axis == &z) delta = -delta;
+//alan3
   int absDelta = abs(delta);
   if (absDelta <= JOYSTICK_DEADBAND) return 0;
 
@@ -7183,12 +7316,26 @@ void taskJoystick(void *param) {
     unsigned long now = micros();
     unsigned long elapsedUs = now - joystickSampleTimeUs;
     joystickSampleTimeUs = now;
-
+// alan
     readJoystickAxis(joystickZ);
     readJoystickAxis(joystickX);
     readJoystickAxis(joystickY);
 
+    // Single-axis lockout.
+    // If both X and Z are being commanded, keep only the axis
+    // with the larger joystick deflection.
+    if (joystickZ->direction != 0 && joystickX->direction != 0) {
+      if (abs(joystickZ->deflection) >= abs(joystickX->deflection)) {
+        joystickX->direction = 0;
+        joystickX->deflection = 0;
+      } else {
+        joystickZ->direction = 0;
+        joystickZ->deflection = 0;
+      }
+    }
+
     bool moveNeutral = joystickZ->direction == 0 && joystickX->direction == 0;
+//alan
     bool buttonPressed = updateJoystickButton(rawButtonPressed, moveNeutral);
     joystickRapidPressed = buttonPressed;
 
@@ -8327,7 +8474,17 @@ void buttonPlusMinusPress(bool plus) {
 
 void buttonOnOffPress(bool on) {
   resetMillis = millis();
+  //alan4
+  
+  if (on && startupInfoActive) {
+    startupInfoActive = false;
+    lcdHashLine3 = 0;
+    return;
+  }
+
   bool missingZStops = needZStops() && (z.leftStop == LONG_MAX || z.rightStop == LONG_MIN);
+  
+  //alan4
   if (on && isPassMode() && (missingZStops || x.leftStop == LONG_MAX || x.rightStop == LONG_MIN)) {
     beep();
   } else if (!isOn && on && mode == MODE_GCODE && gcodeProgramIndex >= gcodeProgramCount && setupIndex == 1) {
@@ -8446,8 +8603,18 @@ void buttonMoveStepPress() {
     }
   }
 }
-
+//alan
 void buttonMeasurePress() {
+  if (!confirmMeasureChange) {
+    confirmMeasureChange = true;
+    confirmMeasureTime = millis();
+
+    setText("t3", "Press Measure again to confirm Unit Change");
+    return;
+  }
+
+  confirmMeasureChange = false;
+
   if (measure == MEASURE_METRIC) {
     setMeasure(MEASURE_INCH);
   } else if (measure == MEASURE_INCH) {
@@ -8456,6 +8623,7 @@ void buttonMeasurePress() {
     setMeasure(MEASURE_METRIC);
   }
 }
+//alan
 
 void buttonReversePress() {
   setDupr(-dupr);
@@ -8615,16 +8783,27 @@ bool processNumpadResult(int keyCode) {
   }
 
   // Set axis 0 newDu ahead.
-  if (keyCode == B_Z || keyCode == B_X || keyCode == B_Y) {
-    a->originPos = -pos;
-    return true;
-  }
-
+//alan6  if (keyCode == B_Z || keyCode == B_X || keyCode == B_Y) {
+//alan6    a->originPos = -pos;
+//alan6    return true;
+//alan6  }
+//alan6
+if (keyCode == B_Z || keyCode == B_Y) {
+  a->originPos = -pos;
+  return true;
+}
+//alan6
   // Set X axis 0 from diameter.
-  if (keyCode == B_DIAMETER || keyCode == B_X_ENA) {
-    a->originPos = -a->pos - posDiffAbs / 2;
-    return true;
-  }
+//alan6  if (keyCode == B_DIAMETER || keyCode == B_X_ENA) {
+//alan6    a->originPos = -a->pos - posDiffAbs / 2;
+//alan6    return true;
+//alan6  }
+//alan6
+if (keyCode == B_DIAMETER || keyCode == B_X) {
+  a->originPos = -a->pos - posDiffAbs / 2;
+  return true;
+}
+//alan6
 
   if (keyCode == B_STEP) {
     if (newDu > 0) {
@@ -9797,6 +9976,11 @@ void setup() {
 }
 
 void loop() {
+  //alan
+  if (confirmMeasureChange && millis() - confirmMeasureTime > 3000) {
+    confirmMeasureChange = false;
+  }
+  //alan
   if (emergencyStop != ESTOP_NONE) {
     return;
   }
