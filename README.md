@@ -19,21 +19,15 @@ This is a fork created by Alan Merry and includes changes to the Nextion display
 //alan6. Amend the diameter display so the correct diameter is displayed after the diameter has been entered by pressing button tx, this was previously doubling the diameter. 
 
 
-The assumption with this fork is that the Nextion Touch screen is deplyed as the sole data entry method.
-
-
-
-
-**Design lathe parts in the browser with [LatheCode](https://kachurovskiy.com/lathecode/):** start from sample shapes, dimensions, drawings, saved profiles, or STL meshes; preview the result in 2D/3D; then export STL or G-code for machining. It fits naturally with NanoELS and Modulathe workflows: design the turned profile, inspect the generated toolpath, and run or save G-code for your controller, with drafts and settings kept locally in your browser.
-
+The assumption with this fork is that the Nextion Touch screen is deployed as the sole data entry method.
 # NanoEls H5
 
 CNC and electronic lead screw controller based on ESP32-S3 that supports up to 3 axes:
 
 - All the features of H4
 - Cheaper and much easier to make than H4
-- External PS2 keyboard
-- High resolution touch screen
+- External PS2 keyboard - optional
+- High resolution touch screen - 5inch or 7inch
 - More ports: joystick, MPGs, scales
 
 ![image](https://github.com/user-attachments/assets/de30c2ee-14d5-483a-b23d-0edc43125bd0)
