@@ -1,6 +1,6 @@
 This software and instructions are [provided as is](LICENSE), without warranty of any kind. [🇷🇺 Перевод на русский](https://translate.google.com/translate?hl=en&sl=en&tl=ru&u=https%3A%2F%2Fgithub.com%2Fkachurovskiy%2Fnanoels%2Fblob%2Fmain%2FREADME.md), [🇩🇪 deutsche Übersetzung](https://translate.google.com/translate?hl=en&sl=en&tl=de&u=https%3A%2F%2Fgithub.com%2Fkachurovskiy%2Fnanoels%2Fblob%2Fmain%2FREADME.md)
 
-This is a fork created by Alan Merry and includes changes to the Nextion display to cater for a 7 inch diaplay and changes to the sketch as follows:-
+This is a fork created by Alan Merry and includes changes to the Nextion display to cater for a 7 inch display and changes to the sketch as follows:-
 
 
 //alan.  Change axis button text colour to yellow when it is disabled by pressing the Axis Letter
