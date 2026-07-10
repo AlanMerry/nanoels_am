@@ -1,48 +1,566 @@
-This software and instructions are [provided as is](LICENSE), without warranty of any kind. [🇷🇺 Перевод на русский](https://translate.google.com/translate?hl=en&sl=en&tl=ru&u=https%3A%2F%2Fgithub.com%2Fkachurovskiy%2Fnanoels%2Fblob%2Fmain%2FREADME.md), [🇩🇪 deutsche Übersetzung](https://translate.google.com/translate?hl=en&sl=en&tl=de&u=https%3A%2F%2Fgithub.com%2Fkachurovskiy%2Fnanoels%2Fblob%2Fmain%2FREADME.md)
-
-This is a fork created by Alan Merry and includes changes to the Nextion display to cater for a 7 inch display and changes to the sketch as follows:-
-
-
-//alan.  Change axis button text colour to yellow when it is disabled by pressing the Axis Letter
-
-//alan1. Add a Unit Confirmation Change, press Unit Button within 3 secs to confirm the change. Otherwise it will revert to the original Units.
-
-//alan2. Resolve the joystick not respecting the move limits when the Z Axis Joystick is inverted. This is despite the fact that the Joystick moves correctly.
-         The Z Pulse sign is restored.
-
-//alan3. Limit Joystick moves to a single axis, the first big move takes priority.
-
-//alan4. After all power ons, display the Software version and IP address until the play button is pressed. This is after the wifi configuration has been completed
-
-//alan5. Add new Web UI Page to display all of the Pref Settings on a single page. This faciltates easy output of all of the Pref Settings as a report
-
-//alan6. Amend the diameter display so the correct diameter is displayed after the diameter has been entered by pressing button tx, this was previously doubling the diameter. 
-
-
-The assumption with this fork is that the Nextion Touch screen is deployed as the sole data entry method.
 # NanoEls H5
 
-CNC and electronic lead screw controller based on ESP32-S3 that supports up to 3 axes:
+Latest version of the electronic lead screw controller for metal lathes - https://www.youtube.com/watch?v=dgiMwlfZPNg
 
-- All the features of H4
-- Cheaper and much easier to make than H4
-- External PS2 keyboard - optional
-- High resolution touch screen - 5inch or 7inch
-- More ports: joystick, MPGs, scales
+![h5](https://github.com/user-attachments/assets/e8203990-e78e-4aa1-a0c6-807b83c74bca)
 
-![image](https://github.com/user-attachments/assets/de30c2ee-14d5-483a-b23d-0edc43125bd0)
+## Parts list
 
-See [h5 folder for hardware files, software and assembly](https://github.com/AlanMerry/nanoels_am/tree/main/h5).
+- 67€ Nextion 5 inch display [NX8048P050 011C Y](https://www.aliexpress.com/item/1005002457232503.html)
+- 10€ [5V 2A non-USB power adapter](https://www.amazon.de/dp/B09KNFD38L)
+- 5€ [ESP32-S3 N16R8 weld](https://www.aliexpress.com/item/1005005051294262.html)
+- 2€ [SN74HCT245N](https://www.aliexpress.com/item/1005007118898020.html) - pack of 10, we only need 2
+- 6€ 3 packs of [5 pairs 3.5mm terminals 4P straight](https://www.aliexpress.com/item/1005006895741900.html)
+- 3€ [USB C male to female](https://www.aliexpress.com/item/1005007549815957.html)
+- 5€ [custom PCB](pcb/Gerber_PCB_NanoElsH5-20241218.zip) ordered on jlcpcb.com
+- [3D-printed case](case/h5case.step) with [SD card handle](case/h5sdhandle.step)
+- 5x M3 bolts 5-8mm length
+- Optional 19€ [PS2 mini keyboard](https://www.amazon.de/gp/product/B01MRJQVZP)
+- Optional 1€ [curved 4-pin header](https://de.aliexpress.com/item/1005007569841697.html) to connect display wires to the PCB
 
+## Display options
 
-## Build examples
+You can use any other Nextion display model including cheaper and smaller ones without touch.
 
-- [EdFleta](https://github.com/kachurovskiy/nanoels/discussions/87)
-- [fmw626](https://github.com/kachurovskiy/nanoels/discussions/118)
-- [Johannmupa](https://github.com/kachurovskiy/nanoels/discussions/89)
-- [kachurovskiy](https://youtu.be/jR4tBBHSl3c?t=62)
+- Requires re-compiling the `h5.tft` file from the [h5.HMI](https://github.com/kachurovskiy/nanoels/blob/main/h5/screen/h5.HMI) for your display
+- Needs custom 3D-printed case since `case/h5case.step` will no longer fit
 
-# Contributing to the project
+## Ordering PCB
 
-- Questions, problems and improvements: please start [a new GitHub Discussion](https://github.com/kachurovskiy/nanoels/discussions/new) or a new Issue
-- Successful builds: please start a new GitHub Discussion with photos and comments
+1. Go to https://cart.jlcpcb.com/quote, click "Add gerber file"
+2. Use Gerber ZIP file supplied in https://github.com/kachurovskiy/nanoels/tree/main/h5/pcb/
+3. Select `LeadFree HASL` and `Global Standard Direct Line` shipping
+4. Should cost 5€ and arrive within 2 weeks
+
+## Schematics and PCB component placement
+
+![schematics](pcb/schematics.png)
+
+![image](https://github.com/user-attachments/assets/9f769450-df6a-4440-b288-81dae1a53ff5)
+
+![image](https://github.com/user-attachments/assets/8a630150-ad79-434e-bc0c-9a0f711de5bb)
+
+## Install firmware from .bin
+
+Download the latest firmware files from this folder on GitHub:
+
+- Use `h5.ino.YYYYMMDD.merged.bin` for first-time USB flashing of a blank ESP32, or when you need to replace the bootloader, partition table, and firmware together. Flash it at address `0x0`.
+- Use `h5.ino.YYYYMMDD.bin` for normal firmware updates after the ESP32 already has the NanoEls bootloader and partition table installed. This is the file to upload in the H5 Web UI under `ESP32 Firmware Upload`.
+
+Precompiled firmware binaries include third-party Arduino/ESP32 components; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for license notices and rebuild/relink information.
+
+Flash the firmware before soldering the ESP32 onto the H5 PCB. Connect a USB cable directly to the ESP32 board `COM` port and open [Espressif esptool-js](https://espressif.github.io/esptool-js/) in Chrome. For a new ESP32, connect and upload `h5.ino.YYYYMMDD.merged.bin` at address `0x0`.
+
+<img width="576" height="342" alt="flash-bin" src="https://github.com/user-attachments/assets/a00a95b2-daf2-4631-ba0e-231ae8a523f7" />
+
+## Assembly instructions
+
+NOTE: throughout the assembly make sure to avoid static electricity accumulation on your body by wearing suitable clothes and shoes, not using chairs known to cause ESD. Touch any grounded metal device housing to check.
+
+1. Check that ESP32 board is working by uploading firmware onto it as per instructions above.
+1. Solder ESP32, 2x SN74HCT245N and optional curved 4-pin header onto the PCB. **Triple check the side and orientation of each piece before soldering.**
+1. Insert USB extension into the COM port
+1. Separate all terminals into 2 pieces. Insert female terminals into the 3D-printed housing. Place the PCB on top and secure it with 4 M3 bolts. Secure the other end of the USB cable in the access hole with an M3 bolt.
+1. Solder 15 terminals to the PCB while everything is positioned in the case.
+1. Remove screen back cover. Attach the included 4-lead wire to the screen and to the PCB - each `RX` should be attached to `TX` on the other side.
+1. Move dynamic from screen back cover to the main Nextion PCB - e.g. add 3 drops of hot glue and place the dynamic on them with a hard steel side (soft side up)
+1. Bolt the case and screen together using the bolts that used to hold the back cover.
+1. Supply up to 2A of power to the `POWER` terminal. USB power is enough for flashing the bare ESP32, but 0.5A provided by standard USB is not enough to start the screen.
+1. Upload [h5.tft](screen/h5.tft) to the display over WiFi. See [Upload screen .tft over WiFi](#upload-screen-tft-over-wifi).
+1. Cut the keyboard cord to the suitable length, find which color corresponds to which line in your particular keyboard [using the port pinout](https://en.wikipedia.org/wiki/PS/2_port) and multimeter continuity tester.
+
+## Upload screen .tft over WiFi
+
+The normal display update path is the H5 Web UI. The MicroSD method is kept as a fallback at the end of this README.
+
+1. Keep the controller stopped and power the screen from the `POWER` terminal.
+2. On first boot, connect your computer or phone to the `NanoEls-H5-Setup` WiFi network using password `nanoels-h5`, then open `http://192.168.4.1`.
+3. If the controller is already connected to your normal WiFi, open the IP address shown on the H5 screen, in your router, or in the Arduino serial monitor.
+4. In `Nextion TFT Upload`, select [h5.tft](screen/h5.tft).
+5. Leave `First upload / factory display` checked for a new 9600-baud Nextion. Uncheck it only when the display is already running the uploaded 115200-baud H5 screen.
+6. Keep the browser page open until the upload finishes and the display restarts.
+
+## First power-up checks
+
+- Spindle direction: rotate the chuck forward manually - angle on screen should increase. If it decreases, swap `B` and `A` wires in the terminal.
+- Motor direction: try moving motors using keyboard arrows - if a motor is moving in the wrong direction, change `Invert direction` for that axis in the Web UI `Machine Config`, save and restart. You can also swap the motor leads `A+` and `A-` in the stepper driver if it is open loop.
+
+## Rear label
+
+Print [h5.pdf](case/h5.pdf) on a normal printer as A4 at 19% scale, cut out and glue to the back of the case using e.g. double-sided tape.
+
+If you want, you can modify the label by editing [h5.fig](case/h5.fig) file on figma.com and export a new PDF for printing.
+
+## Wiring
+
+ENCODER terminal:
+
+- 5V - connect to encoder power-in line (usually red)
+- GND - connect to encoder power-in line (usually black) and wire shielding if there's any
+- ENCB - connect to one of the encoder signal lines
+- ENCA - connect to one of the encoder signal lines
+
+Z and X axes - stepper terminal for the lead screws:
+
+- 5V - connect to stepper driver PUL+, DIR+, ENA+ and wire shielding if there's any
+- ENA - connect to stepper driver ENA-
+- DIR - connect to stepper driver DIR-
+- STEP - connect to stepper driver PUL-
+
+Pulse motion wheels for Z, X, and optional Y axes (`ZPULSE`, `XPULSE`, `YPULSE`) are wired in the same manner as the encoder. For any encoder terminal, switch `A` and `B` wires to invert the encoder direction.
+
+### Optional joystick
+
+Joystick support is experimental, optional, and disabled by default in `h5.ino`. A 1-, 2-, or 3-axis potentiometer joystick is supported. Enable joystick support only after wiring the joystick, and enable only the joystick inputs that are actually connected:
+
+- `JSIGNAL` carries signals only: `JZ`, `JX`, `JY`, `JBUTTON`
+- Power the joystick potentiometers from `JPOWER` 5V through a resistor divider that brings the joystick supply down to about 3.3V, or use a small 3.3V regulator sharing controller `GND`; do not feed 5V into the potentiometers because the ESP32 ADC pins are not 5V analog inputs
+- Connect each potentiometer wiper to the matching `JZ`, `JX`, or `JY` signal. Leave missing axes disconnected and disable the matching `Z input enabled`, `X input enabled`, or `Y input enabled` checkbox in the Web UI `Machine Config`
+- Connect the joystick button between `JBUTTON` and `GND`
+- Leave enabled joystick axes centered while powering on. If joystick support is enabled while the joystick is unplugged or any enabled axis is not centered at startup, H5 ignores joystick input until the next restart
+- Disabled joystick axes are treated as neutral. Z and X inputs behave like proportional handwheel input for their matching machine axes. Y input adjusts pitch in modes that allow joystick pitch changes; when it is not used for pitch, Y moves the optional machine Y axis if `ACTIVE_Y` is enabled. Holding the button enables rapid motion for manual joystick moves
+- In `JOY` mode, use `ON`/`OFF` as the feed clutch. With feed off, Z/X deflection jogs the carriage or cross-slide normally. With feed on, Z/X deflection commands spindle-synchronized feed using the configured pitch magnitude. Pressing the joystick button while Z or X is deflected performs rapid movement. If `Button toggles ON/OFF` is enabled, a short button click while Z and X are neutral toggles the feed clutch. After the first feed engagement, `JOY` preserves the thread phase and waits for the correct spindle angle before later feed engagements.
+
+**WARNING:** disconnecting joystick when controller is powered on can lead to random movements due to floating analog inputs.
+
+Scale terminals aren't used in the code yet.
+
+## Mounting options
+
+On the back of the case there are 2 holes for M5 threaded inserts 130mm on center.
+
+## GCode over WiFi for complex parts
+
+WiFi credentials are configured in the H5 Web UI and stored in ESP32 Preferences. On first boot, or when the saved network cannot be reached, NanoEls starts a setup access point:
+
+- Network: `NanoEls-H5-Setup`
+- Password: `nanoels-h5`
+- Web UI: `http://192.168.4.1`
+
+Open the Web UI, fill in the `WiFi` section, click `Save and restart`, then connect through the IP address shown on the H5 screen or Arduino serial monitor. The Web UI can be used to save GCode files onto the controller and run them later at the machine in the GCODE mode.
+
+Firmware and screen uploads use the same Web UI described above. Anyone on the local network can access the Web UI, so only enable WiFi on a trusted network.
+
+The Web UI also has a `Machine Config` section for encoder, Z/X/Y axis, handwheel, manual stepping, and joystick parameters. Save changes only while the controller is stopped; NanoEls stores them in ESP32 Preferences and restarts to apply them.
+
+The `Keyboard` section lets you change PS/2 keyboard key-code mapping, learn key codes from the connected keyboard, and toggle showing key presses on the Nextion screen. Keyboard mapping is stored in ESP32 Preferences and takes effect without recompiling firmware. GPIO pin mapping still requires editing `h5.ino`.
+
+### Experimental Web Control UI
+
+The Web UI includes an experimental `Control` tab for phones and tablets. It can be used as an optional control surface when you prefer not to use a PS/2 keyboard or when you do not have a suitable touch Nextion screen. The controller still runs all motion logic locally on the ESP32; the browser only sends button actions and shows status.
+
+Use it with the same caution as any other machine-control input:
+
+- Treat the Web Control UI as experimental. Test every button, axis direction, stop, and mode with motors clear of the work before cutting.
+- Keep a physical power switch, emergency stop, or stepper-driver enable cutoff within reach. Do not rely on WiFi, a browser tab, or a touchscreen as the only way to stop motion.
+- Use it only on a trusted local network. Anyone who can reach the Web UI can control the machine.
+- Keep the controller stopped before changing WiFi, firmware, screen, machine config, or keyboard settings.
+- Avoid using Web Control for unattended operation. Phone sleep, browser reloads, weak WiFi, or moving out of range can interrupt the UI even though the controller has failsafes for held jog buttons.
+- Check the on-machine screen/controller state when anything looks wrong or delayed. If in doubt, stop the controller physically before continuing.
+
+UI options such as Accessibility are in the Web UI `UI` tab. They are browser-local, stored in `localStorage`, and do not use the firmware Save/Reset flow. Voice feedback uses the browser Web Speech API.
+
+To generate GCode for your parts, upload STL model of your part to https://kachurovskiy.com/lathecode/ and specify parameters like stock diameter and tool used.
+
+Handwheels and limits have no effect when GCODE is running.
+
+### Supported GCode commands
+
+NanoEls implements a small uppercase RS274/GRBL-style subset for lathe work. Coordinates and feed values use the current GCode unit mode: `G21` for millimeters or `G20` for inches. GCODE mode starts in absolute positioning (`G90`) with the firmware default feed rate. Use one command per line when possible.
+
+Motion commands:
+
+- `G0`, `G00`, `G1`, `G01` - linear move on `X`, `Z`, and optionally `Y`. `G0` and `G1` use the same interpolation and feed handling. `F` sets feed in current units per minute and may be supplied on the move line, for example `G1 X12.5 Z-3 F120`.
+- `X...`, `Z...`, or `Y...` without a leading `G` - treated as a `G0`/`G1` move.
+- `G32` - single-pass spindle-synchronized threading move. `F` is the thread lead per spindle revolution in current units, not feed per minute. `F` must be positive; the thread direction comes from the axis movement direction, for example `G32 Z-10 F1.5`.
+
+Mode and setup commands:
+
+- `G20` - use inch units.
+- `G21` - use metric units.
+- `G90` - absolute positioning.
+- `G91` - relative positioning.
+- `G94` - feed-per-minute mode; accepted as a no-op because this is already how feed is handled for `G0`/`G1`.
+- `G18` - ZX plane selection; accepted as a no-op.
+
+Other accepted commands:
+
+- `F...` - set the modal feed rate for later `G0`/`G1` moves.
+- `M0`, `M1`, `M2`, `M30` - stop/end the running GCode program.
+- `T...` - accepted and ignored.
+
+Supported syntax:
+
+- Optional line numbers like `N10 G1 X1 Z2`; the `N...` prefix must be followed by a space.
+- Comments in `(parentheses)` or after `;` until the end of the line.
+- `%` program start/end markers are accepted and ignored.
+- `Y` moves only work when the optional Y axis is enabled with `ACTIVE_Y`.
+
+<img width="692" height="518" alt="h5v26" src="https://github.com/user-attachments/assets/16243b74-b248-450e-a368-536a61e6671a" />
+
+## Custom keyboard mapping
+
+Keyboard key-code mapping is configurable from the H5 Web UI and does not require rebuilding `.bin` files.
+
+1. Open the H5 Web UI through the setup access point or the controller IP address.
+2. Keep the controller stopped.
+3. In the `Keyboard` section, use `Learn` next to an action, then press the physical keyboard key you want to assign. The learned PS/2 key code is filled in automatically.
+4. Alternatively, type a key code manually in the action's number field.
+5. Enable `Show key presses on screen` if you want the Nextion bottom line to show the last physical key code while testing a keyboard.
+6. Click `Save keyboard`. The new mapping is stored in ESP32 Preferences and takes effect immediately.
+
+`Reset keyboard` restores the firmware default mapping.
+
+## Usage manual
+
+The controller can be controlled via touchscreen and/or keyboard. Keyboard is optional but it's much nicer to use mechanical buttons for manual moves and not worrying about accidentally pressing a nearby button on the touchscreen.
+
+### Touchscreen
+
+If descriptions of the buttons below are unclear, don't worry, skip this section and read the rest of the manual, that should clarify things.
+
+![h5v11screen](https://github.com/user-attachments/assets/7634182a-a3e4-4dec-bc8b-5d9a3d7d92bf)
+
+Top line:
+
+- `bStatus` turns the controller off - stops the ongoing operation or manual move, resets spindle angle and turns to 0
+- `bMode` turns the controller off and changes the mode
+- `mMultistart` increases the number of starts by 1 when pressed in short intervals, sets the number of starts to 1 if pressed after a pause
+- `tPitch` reverses the pitch - makes it positive if it's negative, makes it negative if it's positive. In gearbox modes, reversing while ON keeps the current spindle/axis phase so the controller stays in the thread.
+- `bMeasure` changes measuring system between metric, imperial and tpi
+- `mPlus` increments the pitch or number of passes in a multi-pass operation
+- `mMinus` decrements the pitch or number of passes in a multi-pass operation
+
+Middle line:
+
+- `tStepVal` toggles between different step sizes used in manual moves
+- `tRPMVal` shows current rotations per minute of the spindle
+- `tTurnsVal` shows the number of full turns performed by the spindle since the last off/stop command
+- `tAngleVal` shows the current angle of the spindle
+
+X axis group:
+
+- `mXUp` and `tXUp` clear the up limit if it's set, sets the limit in the current `X` position if it's not set
+- `bX` enables or disables the axis. When pressed with active numpad input, considers the input as measured diameter of the part at current cutter position and sets `X` zero to negative half of the given diameter.
+- `tX` take current `X` position as zero
+- `mXDown` and `tXDown` clear the down limit if it's set, sets the limit in the current `X` position if it's not set
+- `m0` moves cross-slide forward
+- `m1` moves cross-slide back
+
+Y axis group:
+
+- `mYUp` and `tYUp` clear the positive `Y` limit if it's set, sets the limit in the current `Y` position if it's not set
+- `bY` enables or disables the axis
+- `tY` take current `Y` position as zero
+- `mYDown` and `tYDown` clear the down limit if it's set, sets the limit in the current `Y` position if it's not set
+- `m2` moves `Y` axis forward
+- `m5` moves `Y` axis back
+
+Z axis group:
+
+- `m3` and `tZLeft` clear the left limit if it's set, sets the limit in the current `Z` position if it's not set
+- `bZ` enables or disables the axis
+- `tZ` take current `Z` position as zero
+- `m4` and `tZRight` clear the right limit if it's set, sets the limit in the current `Z` position if it's not set
+- `m6` moves the carriage left
+- `m7` moves the carriage right
+
+Lower part of the screen:
+
+- `t3` shows diameter, current WiFi status, pending numpad value or mode configuration prompt
+- `mStop` turns the controller off
+- `bD0` to `bD9` append a number at end of the numpad input
+- `mBack` works as backspace - deletes the last entered number
+- `mPlay` starts the current mode or proceeds to the next step of mode configuration
+
+### Keyboard
+
+- ⌨️`Left`, ⌨️`up`, ⌨️`down`, ⌨️`right` arrows control the manual movement
+- ⌨️`Plus` / ⌨️`minus` control the pitch
+- ⌨️`Enter` turns on the current mode
+- ⌨️`Esc` is stop
+- ⌨️`A` / ⌨️`W` / ⌨️`D` / ⌨️`S` control limits
+- ⌨️`Win` controls angle / rpm display / WiFi status
+- ⌨️`Tilda` / ⌨️`backtick` (key under ESC) controls step
+- ⌨️`M` changes metric / inch / tpi
+- ⌨️`R` for reverse
+- Top row numbers ⌨️`0`-⌨️`9` work as number input
+- ⌨️`Backspace` removes last number
+- Modes:
+  - ⌨️`F1`: gearbox
+  - ⌨️`F2`: turning
+  - ⌨️`F3`: facing
+  - ⌨️`F4`: cone
+  - ⌨️`F5`: parting
+  - ⌨️`F6`: threading
+  - ⌨️`F7`: async
+  - ⌨️`F8`: ellipse
+  - ⌨️`F9`: gcode
+  - ⌨️`F10`: y axis (if configured)
+  - ⌨️`F11`: cycle modes
+  - ⌨️`F12`: joystick lathe mode
+- ⌨️`X` zeroes X axis
+- ⌨️`Z` zeroes Z axis
+- ⌨️`C` disables / enables X axis
+- ⌨️`Q` disables / enables Z axis
+- ⌨️`O` pressed while a number is entered zeroes X from diameter
+
+### Convention for referring to screen or keyboard buttons in this manual
+
+Text like 🖥️`bMeasure` refers to looking at or pressing on the corresponding area of the screen, in this case green "IN" rectangle in the upper-right part of it.
+
+Text like ⌨️`M` refers to pressing the corresponding letter on the keyboard, in this case letter M.
+
+Dash between symbols refers to all the buttons between the 2 mentioned buttons e.g. ⌨️`1`-`0` means `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`, `0` keys on the keyboard.
+
+Slash between symbols refers to either one of the symbols e.g. ⌨️`+`/`-` means "pressing plus or minus key on the keyboard".
+
+### Switching between metric and imperial
+
+Press 🖥️`bMeasure` or ⌨️`M`  to change the system of measurement between:
+
+- Metric (mm)
+- Inch
+- TPI
+
+It affects how the pitch and position is displayed and changes, move steps for precision moves.
+
+### Setting pitch
+
+Pitch is the distance that carriage will move when the spindle makes the full turn. For example, M14 thread uses 2mm pitch.
+
+Use numpad buttons 🖥️`bD0`-`bD9` or ⌨️`1`-`0` to enter the pitch value, 🖥️`mPlay` or ⌨️`Enter` to accept it.
+
+Adjust the desired pitch using 🖥️`mPlus`/`mMinus` or ⌨️`+`/`-`.
+
+Use negative pitch values e.g. `-2mm` to cut left-to-right threads. To change the pitch sign, press 🖥️`tPitch` or ⌨️`R`.
+
+### Setting step
+
+Step setting is used for manual carriage moves in `off` state - i.e. when no mode is active and no thread is being cut. Current step setting is normally shown in 🖥️`tStepVal`.
+
+Pressing 🖥️`tStepVal` or ⌨️`Key under ESC` cycles through the list of predefined steps:
+
+- Metric: `1mm`, `0.1mm`, `0.01mm`
+- Imperial: `0.1"`, `0.01"`, `0.001"`
+
+Use 🖥️`bD0`-`bD9` or ⌨️`1`-`0` to enter a custom step value. Pressing 🖥️`tStepVal` or ⌨️`Key under ESC` when the screen bottom line shows `Use 1.234mm?` will make the step equal to `1.234mm`.
+
+### Zeroing the axes
+
+Z and X position can be counted from any location you'd like. By pressing e.g. 🖥️`tZ` or ⌨️`Z` you can take the current position on the respective axis as `0`.
+
+You can also set the `0` at a position ahead of the current position by entering the required distance using the numpad buttons 🖥️`bD0`-`bD9` or ⌨️`1`-`0` and then pressing 🖥️`tZ` or ⌨️`Z`.
+
+You can set X0 on the lathe centerline by making a light cut, measuring diameter, entering it on the numpad and then pressing 🖥️`bX` or ⌨️`O`.
+
+### Moving left and right, in and out
+
+Press 🖥️`m6`/`m7` / ⌨️`Left`/`Right` buttons to move the carriage, 🖥️`m0`/`m1` / ⌨️`Up`/`Down` to move the cross-slide.
+
+Depending on the state of the controller, pressing the move button will result in traveling the following distance:
+
+- `off` - carriage will move by the step distance but at least 1 stepper motor step
+- `ON` - carriage will move in pitch increments (stay in the thread) but at least the step distance
+
+If step is set to `1mm` or `0.1"`, pressing and holding move buttons results in continuous movement allowing for quick tool positioning when the Web UI `Machine Config` setting `Enable continuous moves` is enabled. If it is disabled, or if step is set to values other than `1mm` or `0.1"`, there's a short delay between steps when manual moves are triggered allowing to precisely position the tool.
+
+Changing direction will result in automatic backlash compensation, for example with backlash `0.65mm` and step `0.1mm`, first move in the opposite direction will result in lead screw turning `0.75mm`. Tool should still only move `0.1mm` assuming backlash is uniform and is specified correctly.
+
+When `off`, use numpad buttons 🖥️`bD0`-`bD9` / ⌨️`1`-`0` to enter a custom move distance. Pressing a move button when the screen bottom line shows `Use 1.234mm?` will move `1.234mm` in the corresponding direction. If there's an automatic stop limiting travel, it will move up to the limit and beep.
+
+### Soft limits / automatic stops
+
+Soft limits allow to cut close to the lathe chuck, part shoulder or rear support without hitting them.
+
+One way to set a soft limit is to move the carriage or cross-slide to the desired position and press one of the 🖥️`tZLeft`/`tZRight`/`tXUp`/`tXDown` / ⌨️`A`/`W`/`D`/`S` limit buttons. Pressing the button again removes the limit regardless of the current position.
+
+Another way to set a soft limit is to use numpad buttons 🖥️`bD0`-`bD9` / ⌨️`1`-`0` to enter a distance relative to the current position. Pressing a limit button when the screen bottom line shows `Use 1.234mm?` will set corresponding limit `1.234mm` away from the current position.
+
+Soft limits are used when preparing an automatic operation like turning, facing, threading and cutting off.
+
+### Gearbox mode / electronic lead screw
+
+Press 🖥️`bMode` to switch to the gearbox mode. After turning the controller `ON` with the 🖥️`mPlay` / ⌨️`Enter` button, lead screw will move the distance of 1 pitch for 1 spindle turn.
+
+`XGEAR` works the same way but couples the spindle to the `X` axis instead of `Z`, so the cross-slide moves the distance of 1 pitch for 1 spindle turn. Use ⌨️`F11` mode cycling or the touchscreen mode page to switch to `XGEAR`.
+
+With a small pitch like `0.07mm` this mode is useful for turning - gradually taking off material from the outer diameter of the part.
+
+With a large pitch like `0.5"` one can cut a corresponding thread. Moving with 🖥️`m6` and 🖥️`m7` buttons is supported and does not result in losing the thread.
+
+Direction of movement can be quickly reversed with 🖥️`tPitch` / ⌨️`R` button which toggles the pitch sign. Negative pitch can also be used to cut left threads.
+
+Soft limits are respected in this mode allowing to finish the cut in a precise position.
+
+Cross-slide can be moved with manual move buttons or disabled using 🖥️`bX` / ⌨️`C` and be operated manually.
+
+In `XGEAR`, the carriage can be moved with manual move buttons or disabled using 🖥️`bZ` / ⌨️`Q` and be operated manually.
+
+Press 🖥️`mStop` / ⌨️`Esc` to turn gearbox mode `off` and decouple lead screw movements from spindle turns.
+
+### Joystick lathe mode
+
+Switch to `JOY` with ⌨️`F12`. This mode requires joystick support to be enabled. Enable the Z and/or X joystick inputs for the axes you want to feed; disabled joystick inputs stay neutral.
+
+Set the desired pitch magnitude first and use `ON` / `OFF` as the feed clutch. When `JOY` is `ON`, moving the enabled Z joystick left/right feeds the carriage left/right at that pitch per spindle revolution. Moving the enabled X joystick in/out feeds the cross-slide in/out at the same pitch magnitude. The pitch sign is ignored in this mode; joystick direction selects the cut direction.
+
+Move the enabled joystick Y axis to permanently change the configured pitch like holding `+` or `-`. This also works outside `JOY` while the controller is `OFF`, and while compatible modes are `ON` such as `GEAR`, `XGEAR`, `TURN`, `FACE`, `CUT`, `CONE`, `ASYNC`, and `Y`. Joystick Y does not adjust pitch in `GCODE` or while `THREAD` or `ELLIPSE` operations are running. Larger Y deflection changes pitch faster.
+
+When `JOY` is off, moving the enabled Z or X joystick input jogs the carriage or cross-slide normally. Press and hold the joystick button while Z or X is deflected to rapid-traverse in that direction. If `Button toggles ON/OFF` is enabled, a short button click while Z and X are neutral toggles `ON` / `OFF`; longer presses or clicks made while Z/X are deflected do not toggle.
+
+For manual multi-pass threading, the first feed engagement establishes the thread phase. Later passes stay in that thread: after you retract, return the carriage, and engage feed again, the controller shows `Sync` and waits for the matching spindle phase before moving the carriage. The operator does not need to track spindle angle.
+
+Soft limits are respected for synchronized feed and rapid movement.
+
+### Automatic turning
+
+Press 🖥️`bMode` to switch to the automatic turning mode which is usually used to take large amount of material from the inside or outside diameter of the part in multiple passes.
+
+Set the desired pitch to a suitable value e.g. `0.05mm`. Negative pitch will make turning start from the left limit, positive pitch will make it start from the right. All soft limits (left, right, up, down) must be set before the operation can be started.
+
+Pressing 🖥️`mPlay` / ⌨️`Enter` guides through remaining steps:
+
+- Entering the number of passes - use numpad or 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`, confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Selecting `External` or `Internal` operation - use 🖥️`m6` and 🖥️`m7` to change selection. Internal operations start from the 🖥️`tXUp` limit, external from the 🖥️`tXDown` limit. Confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Confirm the final `Go?` question with 🖥️`mPlay` / ⌨️`Enter`
+
+Turn on the spindle. Operation will proceed fully automatically and the cutter will return to the starting position when done. Pitch can be adjusted on the fly using 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`.
+
+You can skip to the next pass using 🖥️`mPlay` / ⌨️`Enter` while the operation is running.
+
+Operation can be stopped at any time by pressing 🖥️`mStop` / ⌨️`Esc` or using manual move buttons.
+
+In previous versions cross-slide would pull back all the way between the passes, starting from H5V12 we only pull back by a small safe distance.
+
+Handwheels are ignored when this mode is on.
+
+### Automatic facing
+
+Press 🖥️`bMode` to switch to the automatic facing mode which is usually used to take large amount of material from the face of the part in 1 or more passes.
+
+It's setup in the same way as automatic turning above. When running, passes are made along the face instead of the side of the part. Negative pitch will make facing start from the inside.
+
+### Cone
+
+Press 🖥️`bMode` to switch to the cone mode which maintains a constant ratio of movement between the X and Z axes. Cone mode doesn't require soft limits to be set but if they are set, they are respected.
+
+Pressing 🖥️`mPlay` / ⌨️`Enter` guides through the setup:
+
+- Enter cone ratio which is calculated as `(major_diameter - minor_diameter) / length`, see [this spreadsheet for most used values](https://docs.google.com/spreadsheets/d/1l0FUMtlWUjPywN9j94DOL84lB8dFrvdRWZIffT2NoHA/edit?usp=sharing). Confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Select `External` or `Internal` cone - use 🖥️`m6` and 🖥️`m7` to change selection. Confirm with 🖥️`mPlay` / ⌨️`Enter`
+
+Turn on the spindle. Pitch can be adjusted on the fly using 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`. It's convenient to cut multiple cone passes with 🖥️`tPitch` / ⌨️`R` moving the tool in using manual move buttons.
+
+### Automatic cut-off
+
+Press 🖥️`bMode` to switch to the automatic parting mode which gradually feeds the cross-slide into the part from outside or inside in one or multiple passes.
+
+Set the desired pitch to a suitable value e.g. `0.05mm`. Negative pitch will make turning start from the inside, positive pitch will make it start from the outside. 🖥️`tXUp` and 🖥️`tXDown` soft limits must be set before the operation can be started.
+
+Pressing 🖥️`mPlay` / ⌨️`Enter` guides through remaining steps:
+
+- Entering the number of passes - use numpad or 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`, confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Check that pitch corresponds to the desired direction of cutting, click 🖥️`tPitch` / ⌨️`R` to change it
+- Confirm the final `Go?` question with 🖥️`mPlay` / ⌨️`Enter`
+
+Turn on the spindle. Operation will proceed fully automatically and the cutter will return to the starting position when done. Pitch can be adjusted on the fly using 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`.
+
+Operation can be stopped at any time by pressing 🖥️`mStop` / ⌨️`Esc` or using manual move buttons.
+
+Handwheels are ignored when this mode is on.
+
+### Automatic slotting
+
+Press `bMode` until `SLOT` is shown. Slotting moves the cutter in on X, feeds Z to the left, retracts X, then returns Z to the right. The spindle does not drive this mode; only Z and X move.
+
+All Z and X soft limits must be set before the operation can be started. The number of passes controls the X increments between the selected internal or external start and end limits. Pitch magnitude is used as the left feed distance per second and can be adjusted while slotting is running. Setting pitch to 0 pauses the left feed until pitch is increased again. X moves and the return to the right use the configured manual move speeds.
+
+The Web UI setting `Slot left reduction` defaults to 0. For blind slots, increase it slightly to shorten each successive left cut and leave space for chip accumulation near the blind end.
+
+### Automatic threading
+
+Press 🖥️`bMode` to switch to the automatic threading which will cut a thread (optionally multi-start one) in multiple passes.
+
+First passes are larger than average, final passes are shallower.
+
+Set the desired pitch to a suitable value e.g. `2mm` or `20tpi`. Negative pitch will result in a left thread and will make the operation start from the left limit, positive pitch will make the operation start from the right. All soft limits (left, right, up, down) must be set before the operation can be started.
+
+Pressing 🖥️`mPlay` / ⌨️`Enter` guides through remaining steps:
+
+- Entering the number of passes - use numpad or 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`, confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Selecting `External` or `Internal` operation - use 🖥️`m6`/`m7` or ⌨️`Left`/`Right` to change selection. Internal operations start from the 🖥️`tXUp` limit, external from the 🖥️`tXDown` limit. For multi-start thread, press 🖥️`mPlus` to add more starts. Confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Enter optional cone ratio on the numpad. Confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Confirm the final `Go?` question with 🖥️`mPlay` / ⌨️`Enter`
+
+Turn on the spindle. Operation will proceed fully automatically and the cutter will return to the starting position when done.
+
+You can skip to the next pass using 🖥️`mPlay` / ⌨️`Enter` while the operation is running.
+
+Operation can be stopped at any time by pressing 🖥️`mStop` / ⌨️`Esc` or using manual move buttons.
+
+### Automatic half-spheres and half-ellipses
+
+Press 🖥️`bMode` several times until `ELLI` is shown on screen. In this mode, cutter will form convex or concave half-ellipses in multiple passes.
+
+Starting operation with positive pitch forms left hemisphere, with negative pitch - right hemisphere. This ensures that X backlash doesn't affect the cut.
+
+`External` mode forms convex hemisphere (curved outward), `Internal` forms concave hemisphere (curved inward). Start and end points are the same in both cases.
+
+Set the desired pitch to a suitable value e.g. `0.07mm`. All soft limits (left, right, up, down) must be set before the operation can be started.
+
+Pressing 🖥️`mPlay` / ⌨️`Enter` guides through remaining steps:
+
+- Entering the number of passes - use numpad or 🖥️`mPlus`/`mMinus` / ⌨️`+`/`-`, confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Selecting `External` or `Internal` operation - use 🖥️`m6`/`m7` / ⌨️`Left`/`Right` to change selection. Confirm with 🖥️`mPlay` / ⌨️`Enter`
+- Confirm the final `Go?` question with 🖥️`mPlay` / ⌨️`Enter`
+
+Turn on the spindle. Operation will proceed fully automatically and the cutter will return to the starting position when done. Adjusting the pitch on the fly is not supported.
+
+Operation can be stopped at any time by pressing 🖥️`mStop` / ⌨️`Esc` or using manual move buttons.
+
+Handwheels are ignored when this mode is on.
+
+### Async mode
+
+In this mode the carriage disregards spindle movements and instead moves with constant speed of `pitch` per second. When pitch is positive, `Z` axis moves to the left. When pitch is negative, `Z` axis moves to the right. If pitch is 0, `Z` axis doesn't move.
+
+You can adjust the pitch using 🖥️`mMinus`/`mPlus` to adjust the movement speed.
+
+Async mode respects limits if they are set.
+
+## Self-compile firmware with Arduino IDE
+
+Use this path only when you need to change the firmware source or rebuild the `.bin` files yourself.
+
+- Install the [Arduino IDE](https://docs.arduino.cc/software/ide-v2)
+- Add `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json` in [Preferences as "Additional board manager URLs"](https://github.com/kachurovskiy/nanoels/assets/517919/dcc023e6-20fc-4284-ba56-d466dbe4ce53)
+- Install `esp32` [via Board Manager](https://github.com/kachurovskiy/nanoels/assets/517919/094d00ff-1e51-4f26-bb81-aa4ad42bde2a)
+  - If you get a `DEADLINE_EXCEEDED` error while installing `esp32`, [see this post for a workaround](https://forum.arduino.cc/t/ide-2-3-7-now-gives-error-4-deadline-exceeded/1422321/2)
+- Install `PS2KeyAdvanced` and `WebSockets` via Arduino IDE Library Manager
+- Download [this repository](https://github.com/kachurovskiy/nanoels/archive/refs/heads/main.zip), unzip, go to `h5` directory and open `h5.ino` file in the Arduino IDE
+- Check the top constants only if you need to change firmware defaults. Encoder, Z/X/Y axis, handwheel, manual stepping, and joystick parameters can usually be changed later in the Web UI `Machine Config`; PS/2 keyboard mapping can be changed in the Web UI `Keyboard` section.
+- Select "ESP32S3 Dev Module" as device at the top, pick the COM port that appears when you connect the device with a USB cable
+- Upload the sketch to your H5 controller, or use `Sketch > Export Compiled Binary` to create `.bin` files
+
+For later firmware updates over WiFi, upload `build\esp32.esp32.esp32s3\h5.ino.bin` in the H5 Web UI under `ESP32 Firmware Upload`. Keep the controller stopped during upload. The controller restarts automatically after a successful upload.
+
+To create a full image for first-time USB flashing, use the Arduino build output `build\esp32.esp32.esp32s3\h5.ino.merged.bin` at address `0x0`.
+
+Troubleshooting:
+
+- Arduino IDE doesn't detect NanoEls H5: try a different USB cable
+- Arduino IDE fails to upload the sketch: make sure you plugged the extension into the `COM` port, **not** the `USB` port on the ESP32
+- WiFi firmware upload fails with an OTA partition or space error: upload over USB after selecting an OTA-capable partition scheme. USB is also required when changing the partition scheme.
+- Not sure which COM port is NanoEls H5: unplug it, check the list of available ports in Arduino IDE, plug H5 in, see new port that appeared is H5
+- `ImportError: No module named serial` error on Linux: try `sudo apt install python3-serial`
+
+## Upload screen from MicroSD card
+
+Use the MicroSD method only if WiFi upload is unavailable.
+
+1. Format an empty MicroSD card 32 GB or smaller as FAT32.
+2. Copy [h5.tft](screen/h5.tft) to the card.
+3. Insert the card into the Nextion display.
+4. Connect 5V power supply to the `POWER` terminal and wait for the screen to report that flashing has finished.
+5. Disconnect the power and remove the card.
