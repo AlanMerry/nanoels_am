@@ -209,9 +209,9 @@ const bool SPINDLE_PAUSES_GCODE = true; // pause GCode execution when spindle st
 const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 
 // To be incremented whenever a measurable improvement is made.
-//alan4
-#define SOFTWARE_VERSION 3504
-//alan4
+//alan7
+#define SOFTWARE_VERSION 3707
+//alan7
 // To be changed whenever a different PCB / encoder / stepper / ... design is used.
 #define HARDWARE_VERSION 5
 
@@ -237,8 +237,8 @@ const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 #define Y_DIR 2
 #define Y_STEP 17
 
-#define Y_PULSE_A 45
-#define Y_PULSE_B 48
+#define Y_PULSE_A 46
+#define Y_PULSE_B 3
 
 #define JOY_Z 4
 #define JOY_X 5
@@ -6009,15 +6009,15 @@ void updateEnable(Axis* a) {
   }
 
   if (a == &x) {
-    writeNextionCommandRaw(x.disabled ? "bX.pco=61413" : "bX.pco=65535");
+    writeNextionCommandRaw(x.disabled ? "bX.pco=65504" : "bX.pco=61439");
   }
 
   if (a == &z) {
-    writeNextionCommandRaw(z.disabled ? "bZ.pco=61413" : "bZ.pco=65535");
+    writeNextionCommandRaw(z.disabled ? "bZ.pco=65504" : "bZ.pco=61439");
   }
 
   if (a == &y) {
-    writeNextionCommandRaw(y.disabled ? "bY.pco=61413" : "bY.pco=65535");
+    writeNextionCommandRaw(y.disabled ? "bY.pco=65504" : "bY.pco=61439");
   }
 }
 //alan2
@@ -6715,18 +6715,20 @@ void updateDisplay() {
     setText("tX", xText);
     setText("tXUp", xLeftText);
     setText("tXDown", xRightText);
+
     setText("tY", yText);
     setText("tYUp", yLeftText);
     setText("tYDown", yRightText);
+
     setText("tZ", zText);
     setText("tZLeft", zLeftText);
     setText("tZRight", zRightText);
 
-    writeNextionCommandRaw(x.disabled ? "bX.pco=61413" : "bX.pco=65535");
-    writeNextionCommandRaw(z.disabled ? "bZ.pco=61413" : "bZ.pco=65535");
+    writeNextionCommandRaw(x.disabled ? "bX.pco=65505" : "bX.pco=61439");
+    writeNextionCommandRaw(z.disabled ? "bZ.pco=65505" : "bZ.pco=61439");
 
 #if ACTIVE_Y
-    writeNextionCommandRaw(y.disabled ? "bY.pco=61413" : "bY.pco=65535");
+    writeNextionCommandRaw(y.disabled ? "bY.pco=65505" : "bY.pco=61439");
 #endif
   }
 //alan2
@@ -6856,6 +6858,15 @@ void setMeasure(int value) {
   }
   measure = value;
   moveStep = measure == MEASURE_METRIC ? MOVE_STEP_1 : MOVE_STEP_IMP_1;
+}
+
+void resetGcodeState() {
+  gcodeCommand = "";
+  gcodeFeedDuPerSec = GCODE_FEED_DEFAULT_DU_SEC;
+  gcodeAbsolutePositioning = true;
+  gcodeInBrace = false;
+  gcodeInSemicolon = false;
+  setMeasure(MEASURE_METRIC);
 }
 
 void waitForPendingPosNear0(Axis* a) {
@@ -7307,7 +7318,7 @@ void initJoystick() {
   joystickAvailable = true;
 }
 
-void taskJoystick(void *param) {
+void taskJoystick(void* param) {
   JoystickAxisState* joystickZ = &joystickAxes[JOYSTICK_AXIS_Z];
   JoystickAxisState* joystickX = &joystickAxes[JOYSTICK_AXIS_X];
   JoystickAxisState* joystickY = &joystickAxes[JOYSTICK_AXIS_Y];
@@ -8051,11 +8062,7 @@ void taskGcode(void *param) {
       gcodeInitialized = false;
     } else if (!gcodeInitialized) {
       gcodeInitialized = true;
-      gcodeCommand = "";
-      gcodeAbsolutePositioning = true;
-      gcodeFeedDuPerSec = GCODE_FEED_DEFAULT_DU_SEC;
-      gcodeInBrace = false;
-      gcodeInSemicolon = false;
+      resetGcodeState();
     }
     // Implementing a relevant subset of RS274 (Gcode) and GRBL (state management) covering basic use cases.
     char receivedChar = '\0';
@@ -8096,7 +8103,7 @@ void taskGcode(void *param) {
       } else if (receivedChar == '~' /* resume */) {
         setIsOnFromTask(true);
       } else if (receivedChar == '%' /* start/end marker */) {
-        // Not using % markers in this implementation.
+        resetGcodeState();
       } else if (receivedChar == '?' /* status */) {
         writeBuffer(&outBuffer, "<");
         writeBuffer(&outBuffer, isOn ? "Run" : "Idle");
@@ -8511,6 +8518,7 @@ void buttonOnOffPress(bool on) {
         beep();
       } else {
         gcodeProgram += '\n'; // ensures the last line is executed
+        resetGcodeState();
         setIsOnFromTask(true);
       }
     }
@@ -8740,29 +8748,40 @@ bool processNumpadResult(int keyCode) {
     a = &y;
     sign = (keyCode == B_BACK || keyCode == B_STOPB) ? -1 : 1;
   }
-  long posDiffAbs = (a->rotational ? numpadResult * 10 : newDu) / a->screwPitch * a->motorSteps;
+  //alan7long posDiffAbs = (a->rotational ? numpadResult * 10 : newDu) / a->screwPitch * a->motorSteps;
+  long posDiffAbs = round((a->rotational ? numpadResult * 10.0 : newDu) * a->motorSteps / a->screwPitch);
+  //alan7
   long pos = a->pos + posDiffAbs * sign;
+  //alan7
+  long stopPos = posDiffAbs * sign - a->originPos;
+  
+  
+ 
+  
 
-  // Potentially assign a new value to a limit. Treat newDu as a relative distance from current position.
+  // Potentially assign a new value to a limit.
+  // Stop entries are absolute distances from the zeroed axis, not offsets from the current axis position.
   if (keyCode == B_STOPL) {
-    setLeftStop(&z, pos);
+    setLeftStop(a, stopPos);
     return true;
   } else if (keyCode == B_STOPR) {
-    setRightStop(&z, pos);
+    setRightStop(a, stopPos);
     return true;
   } else if (keyCode == B_STOPU) {
-    setLeftStop(&x, pos);
+    setLeftStop(a, stopPos);
     return true;
   } else if (keyCode == B_STOPD) {
-    setRightStop(&x, pos);
+    setRightStop(a, stopPos);
     return true;
   } else if (keyCode == B_STOPF && ACTIVE_Y) {
-    setLeftStop(&y, pos);
+    setLeftStop(a, stopPos);
     return true;
   } else if (keyCode == B_STOPB && ACTIVE_Y) {
-    setRightStop(&y, pos);
+    setRightStop(a, stopPos);
     return true;
   }
+
+//alan7
 
   // Potentially move by newDu in the given direction.
   // We don't support precision manual moves when ON yet. Can't stay in the thread for most modes.
