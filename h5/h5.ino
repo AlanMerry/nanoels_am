@@ -1,4 +1,29 @@
 // https://github.com/kachurovskiy/nanoels
+//
+// NanoELS H5 single-file source layout
+// Software revision 3716: added optional repeatable spring pass after the final pass.
+// Functional motion, backlash, positioning, retract, display, logging and
+// calibration behaviour from h5(37).ino is intentionally preserved.
+//
+// SECTION INDEX
+//   1. User hardware defaults
+//   2. Advanced constants, pins and input mappings
+//   3. Web interface resources
+//   4. Runtime types, state, shared utilities and diagnostic logging
+//   5. Configuration, preferences, Wi-Fi and web services
+//   6. Display and Nextion interface
+//   7. Axis, spindle and motion control
+//   8. Joystick and handwheel control
+//   9. G-code
+//  10. Keyboard and manual controls
+//  11. Automatic machining modes
+//  12. Setup, settings application and main loop
+
+// ============================================================================
+// 1. USER HARDWARE DEFAULTS
+// ============================================================================
+// Firmware defaults that describe the installed machine. Most values may be
+// overridden from the Web UI and restored from ESP32 Preferences at startup.
 
 /* Change values in this section to suit your hardware. */
 
@@ -12,6 +37,9 @@ int ENCODER_BACKLASH = DEFAULT_ENCODER_BACKLASH;
 int AXIS_ENCODER_BACKLASH = DEFAULT_AXIS_ENCODER_BACKLASH;
 
 // Spindle rotary encoder pins. Swap values if the rotation direction is wrong.
+// -----------------------------------------------------------------------------
+// SPINDLE ENCODER PIN DEFINITIONS
+// -----------------------------------------------------------------------------
 #define ENC_A 13
 #define ENC_B 14
 
@@ -69,6 +97,10 @@ long STEP_TIME_MS = DEFAULT_STEP_TIME_MS;
 long DELAY_BETWEEN_STEPS_MS = DEFAULT_DELAY_BETWEEN_STEPS_MS;
 bool ENABLE_CONTINUOUS_MOVE = DEFAULT_ENABLE_CONTINUOUS_MOVE;
 
+// Optional post-cycle repetition of the final programmed pass.
+const bool DEFAULT_ENABLE_SPRING_PASS = false;
+bool ENABLE_SPRING_PASS = DEFAULT_ENABLE_SPRING_PASS;
+
 // Connect to WiFi and expose web UI to control and receive GCode.
 // Credentials are stored in ESP32 Preferences and can be changed from the Web UI.
 // On first boot or connection failure, H5 starts a setup access point.
@@ -83,14 +115,17 @@ const char* WIFI_SETUP_AP_PASSWORD = "nanoels-h5";
 const long INCOMING_BUFFER_SIZE = 100000;
 const long OUTGOING_BUFFER_SIZE = 100000;
 
-//alan New Change Unit Confirmation
+// Measurement-unit change confirmation state.
 
 bool confirmMeasureChange = false;
 unsigned long confirmMeasureTime = 0;
 
-//alan
 
-
+// ============================================================================
+// 2. ADVANCED CONSTANTS, PINS AND INPUT MAPPINGS
+// ============================================================================
+// Compile-time limits, pin assignments, preference keys and input mappings.
+// Changes in this section can affect hardware compatibility and saved settings.
 
 /* Changing anything below shouldn't be needed for basic use. */
 
@@ -136,10 +171,7 @@ const unsigned long HANDWHEEL_PULSE_WAIT_MS = 20; // Keep fast handwheel pulses 
 const bool DEFAULT_JOYSTICK_ENABLED = false;
 const bool DEFAULT_JOYSTICK_Z_ENABLED = true;
 const bool DEFAULT_JOYSTICK_X_ENABLED = true;
-//alan4
-//alan4 const bool DEFAULT_JOYSTICK_Y_ENABLED = true;
 const bool DEFAULT_JOYSTICK_Y_ENABLED = false;
-//alan4
 const bool DEFAULT_JOYSTICK_BUTTON_TOGGLES_ON_OFF = false;
 const int DEFAULT_JOYSTICK_CENTER_SAMPLES = 64;
 const int DEFAULT_JOYSTICK_OVERSAMPLES = 4;
@@ -193,6 +225,9 @@ const long STEPPED_ENABLE_DELAY_MS = 100; // Delay after stepper is enabled and 
 
 // Version of the pref storage format, should be changed when non-backward-compatible
 // changes are made to the storage logic, resulting in Preferences wipe on first start.
+// -----------------------------------------------------------------------------
+// PREFERENCES NAMESPACES AND FORMAT VERSIONS
+// -----------------------------------------------------------------------------
 #define PREFERENCES_VERSION 1
 #define PREF_NAMESPACE "h5"
 #define CONFIG_VERSION 1
@@ -208,17 +243,24 @@ const long GCODE_WAIT_EPSILON_STEPS = 10;
 const bool SPINDLE_PAUSES_GCODE = true; // pause GCode execution when spindle stops
 const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 
+// -----------------------------------------------------------------------------
+// SOFTWARE AND HARDWARE IDENTIFICATION
+// -----------------------------------------------------------------------------
 // To be incremented whenever a measurable improvement is made.
-//alan7
-#define SOFTWARE_VERSION 3707
-//alan7
+#define SOFTWARE_VERSION 3717
 // To be changed whenever a different PCB / encoder / stepper / ... design is used.
 #define HARDWARE_VERSION 5
 
+// -----------------------------------------------------------------------------
+// VERSION STRING HELPERS
+// -----------------------------------------------------------------------------
 #define NANOELS_STRINGIFY_VALUE(value) #value
 #define NANOELS_STRINGIFY(value) NANOELS_STRINGIFY_VALUE(value)
 #define CONTROLLER_VERSION_TEXT "H" NANOELS_STRINGIFY(HARDWARE_VERSION) "V" NANOELS_STRINGIFY(SOFTWARE_VERSION)
 
+// -----------------------------------------------------------------------------
+// Z-AXIS STEPPER AND HANDWHEEL PINS
+// -----------------------------------------------------------------------------
 #define Z_ENA 41
 #define Z_DIR 42
 #define Z_STEP 35
@@ -226,6 +268,9 @@ const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 #define Z_PULSE_A 18
 #define Z_PULSE_B 8
 
+// -----------------------------------------------------------------------------
+// X-AXIS STEPPER AND HANDWHEEL PINS
+// -----------------------------------------------------------------------------
 #define X_ENA 16
 #define X_DIR 15
 #define X_STEP 7
@@ -233,6 +278,9 @@ const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 #define X_PULSE_A 47
 #define X_PULSE_B 21
 
+// -----------------------------------------------------------------------------
+// Y-AXIS STEPPER AND HANDWHEEL PINS
+// -----------------------------------------------------------------------------
 #define Y_ENA 1
 #define Y_DIR 2
 #define Y_STEP 17
@@ -240,39 +288,60 @@ const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 #define Y_PULSE_A 46
 #define Y_PULSE_B 3
 
+// -----------------------------------------------------------------------------
+// JOYSTICK INPUT PINS
+// -----------------------------------------------------------------------------
 #define JOY_Z 4
 #define JOY_X 5
 #define JOY_Y 6
 #define JOY_BUTTON 38
 
+// -----------------------------------------------------------------------------
+// KEYBOARD INTERFACE PINS
+// -----------------------------------------------------------------------------
 #define KEY_DATA 37
 #define KEY_CLOCK 36
 
 const bool DEFAULT_SHOW_KEY_PRESSES = false;
 bool SHOW_KEY_PRESSES = DEFAULT_SHOW_KEY_PRESSES;
 
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — MANUAL MOVEMENT
+// -----------------------------------------------------------------------------
 #define B_LEFT 21 // Left arrow - controls Z axis movement to the left
 #define B_RIGHT 22 // Right arrow - controls Z axis movement to the right
 #define B_UP 23 // Up arrow - controls X axis movement forwards
 #define B_DOWN 24 // Down arrow - controls X axis movement backwards
 #define B_FORWARD 85 // u - Advance Y axis
 #define B_BACK 74 // j - Retreat Y axis
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — VALUE ENTRY AND OPERATION
+// -----------------------------------------------------------------------------
 #define B_MINUS 60 // Numpad minus - decrements the pitch or number of passes
 #define B_PLUS 95 // Numpad plus - increments the pitch or number of passes
 #define B_ON 30 // Enter - starts operation or mode
 #define B_OFF 27 // ESC - stops operation or mode
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — AXIS STOPS
+// -----------------------------------------------------------------------------
 #define B_STOPL 65 // a - sets left stop
 #define B_STOPR 68 // d - sets right stop
 #define B_STOPU 87 // w - sets forward stop
 #define B_STOPD 83 // s - sets rear stop
 #define B_STOPF 73 // i - Y forward stop
 #define B_STOPB 75 // k - Y backward stop
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — DISPLAY AND MACHINING OPTIONS
+// -----------------------------------------------------------------------------
 #define B_MULTISTART 84 // t - multi-start thread button
 #define B_DISPL 12 // Win - changes info displayed in the bottom line (angle, rpm, ...)
 #define B_STEP 64 // Tilda - changes distance moved when movement buttons are used
 #define B_MEASURE 77 // m - controls metric / imperial / tpi
 #define B_REVERSE 82 // r - changes pitch sign (left / right thread)
 #define B_DIAMETER 79 // o - sets X0 so that centerline is at the middle of a given diameter value
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — NUMERIC ENTRY
+// -----------------------------------------------------------------------------
 #define B_0 48 // 0 top row - for number entry
 #define B_1 49 // 1 top row
 #define B_2 50 // ...
@@ -284,6 +353,9 @@ bool SHOW_KEY_PRESSES = DEFAULT_SHOW_KEY_PRESSES;
 #define B_8 56
 #define B_9 57
 #define B_BACKSPACE 28 // removes the last entered number
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — OPERATING MODES
+// -----------------------------------------------------------------------------
 #define B_MODE_GEARS 97 // F1 - sets the mode to gearbox
 #define B_MODE_TURN 98 // F2 - ...
 #define B_MODE_FACE 99 // F3
@@ -298,6 +370,9 @@ bool SHOW_KEY_PRESSES = DEFAULT_SHOW_KEY_PRESSES;
 #define B_MODE_JOYSTICK 108 // F12 - sets the mode to joystick lathe
 #define B_MODE_XGEAR 109 // screen-only - sets the mode to X gearbox
 #define B_MODE_SLOT 110 // screen-only - sets the mode to slotting
+// -----------------------------------------------------------------------------
+// KEYBOARD ACTION CODES — AXIS ZERO AND ENABLE
+// -----------------------------------------------------------------------------
 #define B_X 88 // x - zeroes X axis
 #define B_Z 90 // z - zeroes Z axis
 #define B_Y 72 // h - zeroes Y axis
@@ -318,6 +393,9 @@ struct WebUiEvent {
   bool isPress;
 };
 
+// -----------------------------------------------------------------------------
+// KEYBOARD BINDING TABLE HELPER
+// -----------------------------------------------------------------------------
 #define KEY_BINDING(id, label, code) { id, label, code, code, code }
 
 KeyboardBinding keyboardBindings[] = {
@@ -378,6 +456,10 @@ KeyboardBinding keyboardBindings[] = {
 
 const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBindings[0]);
 
+// -----------------------------------------------------------------------------
+// RUNTIME PREFERENCE KEYS
+// -----------------------------------------------------------------------------
+// Saved operating state that is retained across power cycles.
 #define PREF_VERSION "v"
 #define PREF_DUPR "d"
 #define PREF_POS_Z "zp"
@@ -415,6 +497,10 @@ const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBin
 #define PREF_MOVE_STEP "ms"
 #define PREF_AUX_FORWARD "af"
 
+// -----------------------------------------------------------------------------
+// MACHINE CONFIGURATION KEYS
+// -----------------------------------------------------------------------------
+// Web-configurable hardware, motion, safety and diagnostic settings.
 #define CFG_VERSION "v"
 #define CFG_ENCODER_PPR "encPpr"
 #define CFG_ENCODER_BACKLASH "encBacklash"
@@ -442,8 +528,10 @@ const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBin
 #define CFG_STEP_TIME_MS "stepMs"
 #define CFG_DELAY_BETWEEN_STEPS_MS "stepDelay"
 #define CFG_ENABLE_CONTINUOUS_MOVE "contStep"
+#define CFG_ENABLE_SPRING_PASS "springPass"
 #define CFG_SAFE_DISTANCE_DU "safeDistDu"
 #define CFG_SLOT_LEFT_REDUCTION_DU "slotLeftDu"
+#define CFG_DEBUG_LOG_LEVEL "debugLog"
 #define CFG_ACTIVE_Y "yActive"
 #define CFG_ROTARY_Y "yRotary"
 #define CFG_MOTOR_STEPS_Y "yMotor"
@@ -478,22 +566,37 @@ const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBin
 #define CFG_INVERT_JOYSTICK_Y "joyInvY"
 #define CFG_INVERT_JOYSTICK_BUTTON "joyInvB"
 
+// -----------------------------------------------------------------------------
+// WI-FI CONFIGURATION KEYS
+// -----------------------------------------------------------------------------
 #define WCFG_VERSION "v"
 #define WCFG_ENABLED "en"
 #define WCFG_SSID "ssid"
 #define WCFG_PASSWORD "pwd"
 
+// -----------------------------------------------------------------------------
+// KEYBOARD CONFIGURATION KEYS
+// -----------------------------------------------------------------------------
 #define KCFG_VERSION "v"
 #define KCFG_SHOW_KEY_PRESSES "showKeys"
 
+// -----------------------------------------------------------------------------
+// METRIC MANUAL MOVE STEP SIZES
+// -----------------------------------------------------------------------------
 #define MOVE_STEP_1 10000 // 1mm
 #define MOVE_STEP_2 1000 // 0.1mm
 #define MOVE_STEP_3 100 // 0.01mm
 
+// -----------------------------------------------------------------------------
+// IMPERIAL MANUAL MOVE STEP SIZES
+// -----------------------------------------------------------------------------
 #define MOVE_STEP_IMP_1 25400 // 1/10"
 #define MOVE_STEP_IMP_2 2540 // 1/100"
 #define MOVE_STEP_IMP_3 254 // 1/1000" also known as 1 thou
 
+// -----------------------------------------------------------------------------
+// OPERATING MODE IDENTIFIERS
+// -----------------------------------------------------------------------------
 #define MODE_NORMAL 0
 #define MODE_XGEAR 1
 #define MODE_ASYNC 2
@@ -508,16 +611,25 @@ const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBin
 #define MODE_JOYSTICK 11
 #define MODE_SLOT 12
 
+// -----------------------------------------------------------------------------
+// MEASUREMENT MODE IDENTIFIERS
+// -----------------------------------------------------------------------------
 #define MEASURE_METRIC 0
 #define MEASURE_INCH 1
 #define MEASURE_TPI 2
 
+// -----------------------------------------------------------------------------
+// EMERGENCY-STOP REASON IDENTIFIERS
+// -----------------------------------------------------------------------------
 #define ESTOP_NONE 0
 #define ESTOP_POS 2
 #define ESTOP_MARK_ORIGIN 3
 #define ESTOP_ON_OFF 4
 #define ESTOP_OFF_MANUAL_MOVE 5
 
+// -----------------------------------------------------------------------------
+// MOTION TIMER CONFIGURATION
+// -----------------------------------------------------------------------------
 #define TIMER_FREQ 1000000 // 1MHz async timer frequency
 
 enum PulseCounter {
@@ -552,6 +664,12 @@ const long NEXTION_UPLOAD_BAUD = 115200;
 const int NEXTION_TFT_PACKET_SIZE = 4096;
 const unsigned long NEXTION_CONNECT_TIMEOUT_MS = 2000;
 const unsigned long NEXTION_ACK_TIMEOUT_MS = 5000;
+
+// ============================================================================
+// 3. WEB INTERFACE RESOURCES
+// ============================================================================
+// Embedded HTML, CSS and JavaScript served by the ESP32. These resources form
+// the browser-based configuration, control, diagnostics and logging interface.
 
 const char indexhtml[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -1687,6 +1805,11 @@ const char indexhtml[] PROGMEM = R"rawliteral(
       </section>
 
       <section id="section-logs" class="app-section" data-section="logs">
+        <div class="config-actions">
+          <button id="refresh-debug-log" type="button">Refresh debug log</button>
+          <button id="download-debug-log" type="button" class="secondary">Download</button>
+          <button id="clear-debug-log" type="button" class="secondary">Clear</button>
+        </div>
         <div id="log"></div>
         <div id="command-container">
           <input type="text" id="command" placeholder="Enter command" value="?" minlength="1" required>
@@ -1754,10 +1877,11 @@ const char indexhtml[] PROGMEM = R"rawliteral(
         return controlActionStatusElements.length > 0 ? controlActionStatusElements[0].textContent : '';
       }
     };
-    //alan5
     const prefsSummary = document.getElementById('prefs-summary');
-    //alan5
     const log = document.getElementById('log');
+    const refreshDebugLogButton = document.getElementById('refresh-debug-log');
+    const downloadDebugLogButton = document.getElementById('download-debug-log');
+    const clearDebugLogButton = document.getElementById('clear-debug-log');
     const commandInput = document.getElementById('command');
     const sendButton = document.getElementById('send');
     const gcodeList = document.getElementById('gcode-list');
@@ -1893,7 +2017,14 @@ const char indexhtml[] PROGMEM = R"rawliteral(
         title: 'Automated modes',
         fields: [
           { key: 'safeDistanceDu', label: 'Safe retract distance', unit: 'mm', min: 0, max: 1000, step: 0.0001, firmwareScale: 10000, help: 'Distance the auxiliary axis backs away from the material between automated passes. Set to 0 to disable the extra retract.' },
-          { key: 'slotLeftReductionDu', label: 'Slot left reduction', unit: 'mm/pass', min: 0, max: 1000, step: 0.0001, firmwareScale: 10000, help: 'Shortens each successive slotting left cut by this Z distance for blind slots. Set to 0 for full-length passes.' }
+          { key: 'slotLeftReductionDu', label: 'Slot left reduction', unit: 'mm/pass', min: 0, max: 1000, step: 0.0001, firmwareScale: 10000, help: 'Shortens each successive slotting left cut by this Z distance for blind slots. Set to 0 for full-length passes.' },
+          { key: 'enableSpringPass', label: 'Enable spring pass', type: 'checkbox', help: 'After the final programmed pass, offer repeated final-depth passes. GO repeats; STOP finishes.' }
+        ]
+      },
+      {
+        title: 'Diagnostics',
+        fields: [
+          { key: 'debugLogLevel', label: 'Debug log level', unit: '0=Off, 1=Errors, 2=Basic, 3=Auto, 4=Motion, 5=Verbose', min: 0, max: 5, step: 1, help: 'Use 3 for automatic-mode testing. The fixed-size web log retains the newest diagnostic entries without growing RAM usage.' }
         ]
       },
       {
@@ -3064,7 +3195,6 @@ const char indexhtml[] PROGMEM = R"rawliteral(
         }
       });
     }
-  //alan5
     function renderPrefsSummary(values) {
   if (!prefsSummary) return;
   prefsSummary.innerHTML = '';
@@ -3110,7 +3240,6 @@ const char indexhtml[] PROGMEM = R"rawliteral(
     prefsSummary.appendChild(sectionElement);
   });
 }
-//alan5
 
     function loadConfig() {
       configStatus.textContent = 'Loading machine config...';
@@ -3121,7 +3250,6 @@ const char indexhtml[] PROGMEM = R"rawliteral(
           applyConfigValues(values);
           applyControlConfigValues(values);
            renderPrefsSummary(values);
-//alan5
           configStatus.textContent = '';
         })
         .catch(() => {
@@ -3740,12 +3868,43 @@ const char indexhtml[] PROGMEM = R"rawliteral(
       log.scrollTop = log.scrollHeight;
     }
 
+    function loadDebugLog() {
+      fetch('/debuglog', { cache: 'no-store' })
+        .then(response => response.text())
+        .then(text => {
+          log.innerHTML = '';
+          text.split('\n').filter(Boolean).forEach(logMessage);
+        })
+        .catch(() => logMessage('Failed to load controller debug log'));
+    }
+
+    if (refreshDebugLogButton) refreshDebugLogButton.addEventListener('click', loadDebugLog);
+    if (clearDebugLogButton) clearDebugLogButton.addEventListener('click', () => {
+      fetch('/debuglog/clear', { method: 'POST' }).then(loadDebugLog);
+    });
+    if (downloadDebugLogButton) downloadDebugLogButton.addEventListener('click', () => {
+      fetch('/debuglog', { cache: 'no-store' }).then(r => r.text()).then(text => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+        link.download = 'nanoels-debug-log.txt';
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
+    });
+    loadDebugLog();
+    setInterval(() => {
+      if (document.getElementById('section-logs').classList.contains('active')) loadDebugLog();
+    }, 1500);
+
     listGcodes();
   </script>
 </body>
 </html>
 )rawliteral";
 
+// -----------------------------------------------------------------------------
+// LITTLEFS STARTUP OPTION
+// -----------------------------------------------------------------------------
 #define FORMAT_LITTLEFS_IF_FAILED true
 
 // For MEASURE_TPI, round TPI to the nearest integer if it's within this range of it.
@@ -3758,11 +3917,17 @@ long RPM_BULK = ENCODER_STEPS_INT; // Measure RPM averaged over this number of e
 const long GCODE_FEED_DEFAULT_DU_SEC = 20000; // Default feed in du/sec in GCode mode
 const float GCODE_FEED_MIN_DU_SEC = 167; // Minimum feed in du/sec in GCode mode - F1
 
+// -----------------------------------------------------------------------------
+// DIGITAL OUTPUT AND TASK-DELAY HELPERS
+// -----------------------------------------------------------------------------
 #define DHIGH(x) digitalWrite(x, HIGH)
 #define DLOW(x) digitalWrite(x, LOW)
 
 #define DELAY(x) vTaskDelay(x / portTICK_PERIOD_MS);
 
+// -----------------------------------------------------------------------------
+// NEXTION DISPLAY REFRESH SENTINEL
+// -----------------------------------------------------------------------------
 #define LCD_HASH_INITIAL -3845709 // Random number that's unlikely to naturally occur as an actual hash
 long lcdHashLine0 = LCD_HASH_INITIAL;
 long lcdHashLine1 = LCD_HASH_INITIAL;
@@ -3816,6 +3981,8 @@ void resetJoystickLatheFeedPosition();
 void cancelJoystickLatheSync();
 void resetJoystickLatheFeed();
 
+// Operator input and controller state.
+
 bool inNumpad = false;
 int numpadDigits[20];
 int numpadIndex = 0;
@@ -3840,6 +4007,12 @@ int savedStarts = 0; // starts saved in Preferences
 int nextStarts = starts; // number of starts that should be used asap
 bool nextStartsFlag = false; // whether nextStarts requires attention
 
+// ============================================================================
+// 4. RUNTIME TYPES, STATE AND SHARED UTILITIES
+// ============================================================================
+// Core data structures and shared machine state. Declarations remain together
+// here so all later subsystems use one authoritative runtime model.
+
 struct Axis {
   SemaphoreHandle_t mutex;
 
@@ -3861,6 +4034,15 @@ struct Axis {
   long motorPos; // position of the motor in stepper motor steps, same as pos unless moving back, then differs by backlashSteps
   long savedMotorPos; // motorPos saved in Preferences
   bool continuous; // whether current movement is expected to continue until an unknown position
+
+  // Physical-move diagnostic record used by the permanent logging subsystem.
+  bool motionDiagActive;
+  uint32_t motionDiagSequence;
+  uint8_t motionDiagType;
+  long motionDiagStartTool;
+  long motionDiagStartMotor;
+  long motionDiagTargetTool;
+  long motionDiagTargetMotor;
 
   long leftStop; // left stop value of pos
   long savedLeftStop; // value saved in Preferences
@@ -3906,6 +4088,11 @@ struct Axis {
   PulseCounter pulseCounter;
 };
 
+// Forward declarations for shared axis unit conversion helpers.
+// initAxis() uses duToSteps() before the helper definitions later in this file.
+long stepsToDu(Axis* a, long steps);
+long duToSteps(Axis* a, long du);
+
 void initAxis(Axis* a, char name, bool active, bool rotational, float motorSteps, float screwPitch, float pulsePerRevolution, long speedStart, long speedManualMove,
     long acceleration, bool invertStepper, bool invertEnable, bool needsRest, long maxTravelMm, long backlashDu, int ena, int dir, int step, int pulseA, int pulseB, PulseCounter pulseCounter) {
   a->mutex = xSemaphoreCreateMutex();
@@ -3928,6 +4115,13 @@ void initAxis(Axis* a, char name, bool active, bool rotational, float motorSteps
   a->motorPos = 0;
   a->savedMotorPos = 0;
   a->continuous = false;
+  a->motionDiagActive = false;
+  a->motionDiagSequence = 0;
+  a->motionDiagType = 0;
+  a->motionDiagStartTool = 0;
+  a->motionDiagStartMotor = 0;
+  a->motionDiagTargetTool = 0;
+  a->motionDiagTargetMotor = 0;
 
   a->leftStop = 0;
   a->savedLeftStop = 0;
@@ -3961,7 +4155,7 @@ void initAxis(Axis* a, char name, bool active, bool rotational, float motorSteps
   a->needsRest = needsRest;
   a->movingManually = false;
   a->estopSteps = maxTravelMm * 10000 / a->screwPitch * a->motorSteps;
-  a->backlashSteps = backlashDu * a->motorSteps / a->screwPitch;
+  a->backlashSteps = duToSteps(a, backlashDu);
   a->gcodeRelativePos = 0;
 
   a->ena = ena;
@@ -3976,9 +4170,13 @@ void initAxis(Axis* a, char name, bool active, bool rotational, float motorSteps
   a->pulsePosAvg = 0;
 }
 
+// Axis instances.
+
 Axis z;
 Axis x;
 Axis y;
+
+// Joystick runtime model.
 
 struct JoystickAxisState {
   Axis* axis;
@@ -4018,6 +4216,8 @@ bool anyJoystickAxisEnabled() {
   }
   return false;
 }
+
+// Pulse-counter and spindle runtime state.
 
 pcnt_unit_handle_t pulseUnits[PULSE_COUNTER_COUNT] = {};
 volatile bool pulseCountersReady = false;
@@ -4072,6 +4272,13 @@ bool opIndexAdvanceFlag = false; // Whether user requested to move to the next p
 long opSubIndex = 0; // Sub-index of an automation operation
 int opDuprSign = 1; // 1 if dupr was positive when operation started, -1 if negative
 long opDupr = 0; // dupr that the multi-pass operation started with
+
+// Spring-pass state. After a completed TURN/FACE/THREAD cycle, the controller
+// waits with the tool retracted. GO repeats the final-depth pass; STOP exits.
+bool springPassPrompt = false;
+bool springPassStartPending = false;
+bool springPassActive = false;
+unsigned int springPassCount = 0;
 
 String gcodeCommand = "";
 long gcodeFeedDuPerSec = GCODE_FEED_DEFAULT_DU_SEC;
@@ -4162,15 +4369,129 @@ void clearBuffer(CircleBuffer* b) {
 }
 
 WebServer server(80);
+
+// ----------------------------------------------------------------------------
+// DIAGNOSTIC LOGGING SUBSYSTEM
+// ----------------------------------------------------------------------------
+// Fixed-size circular log retained in RAM. New entries overwrite the oldest
+// entries when full, so logging memory usage cannot grow during operation.
+// The configured level is stored in Preferences and exposed in the Web UI.
+
+enum DebugLogLevel : uint8_t {
+  DEBUG_LOG_OFF = 0,
+  DEBUG_LOG_ERROR = 1,
+  DEBUG_LOG_BASIC = 2,
+  DEBUG_LOG_AUTO = 3,
+  DEBUG_LOG_MOTION = 4,
+  DEBUG_LOG_VERBOSE = 5
+};
+
+const int DEFAULT_DEBUG_LOG_LEVEL = DEBUG_LOG_AUTO;
+int DEBUG_LOG_LEVEL = DEFAULT_DEBUG_LOG_LEVEL;
+const int DEBUG_LOG_ENTRY_COUNT = 120;
+const int DEBUG_LOG_TEXT_LENGTH = 180;
+
+struct DebugLogEntry {
+  uint32_t timeMs;
+  uint8_t level;
+  char text[DEBUG_LOG_TEXT_LENGTH];
+};
+
+DebugLogEntry debugLogEntries[DEBUG_LOG_ENTRY_COUNT];
+volatile int debugLogStart = 0;
+volatile int debugLogCount = 0;
+portMUX_TYPE debugLogMux = portMUX_INITIALIZER_UNLOCKED;
+
+// State used to correlate automatic-cycle and motion log entries.
+uint32_t autoOperationLogStartMs = 0;
+volatile uint32_t motionRequestSequence = 0;
+
+const char* debugLogLevelName(uint8_t level) {
+  switch (level) {
+    case DEBUG_LOG_ERROR: return "ERROR";
+    case DEBUG_LOG_BASIC: return "BASIC";
+    case DEBUG_LOG_AUTO: return "AUTO";
+    case DEBUG_LOG_MOTION: return "MOTION";
+    case DEBUG_LOG_VERBOSE: return "VERBOSE";
+    default: return "OFF";
+  }
+}
+
+void debugLog(uint8_t level, const char* format, ...) {
+  if (DEBUG_LOG_LEVEL == DEBUG_LOG_OFF || level > DEBUG_LOG_LEVEL) return;
+  char message[DEBUG_LOG_TEXT_LENGTH];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(message, sizeof(message), format, args);
+  va_end(args);
+
+  portENTER_CRITICAL(&debugLogMux);
+  int index;
+  if (debugLogCount < DEBUG_LOG_ENTRY_COUNT) {
+    index = (debugLogStart + debugLogCount) % DEBUG_LOG_ENTRY_COUNT;
+    debugLogCount++;
+  } else {
+    index = debugLogStart;
+    debugLogStart = (debugLogStart + 1) % DEBUG_LOG_ENTRY_COUNT;
+  }
+  debugLogEntries[index].timeMs = millis();
+  debugLogEntries[index].level = level;
+  strncpy(debugLogEntries[index].text, message, DEBUG_LOG_TEXT_LENGTH - 1);
+  debugLogEntries[index].text[DEBUG_LOG_TEXT_LENGTH - 1] = 0;
+  portEXIT_CRITICAL(&debugLogMux);
+}
+
+void clearDebugLog() {
+  portENTER_CRITICAL(&debugLogMux);
+  debugLogStart = 0;
+  debugLogCount = 0;
+  portEXIT_CRITICAL(&debugLogMux);
+}
+
+String getDebugLogResponse() {
+  String response;
+  response.reserve(DEBUG_LOG_ENTRY_COUNT * 90);
+  portENTER_CRITICAL(&debugLogMux);
+  const int start = debugLogStart;
+  const int count = debugLogCount;
+  portEXIT_CRITICAL(&debugLogMux);
+  for (int i = 0; i < count; i++) {
+    DebugLogEntry entry;
+    portENTER_CRITICAL(&debugLogMux);
+    entry = debugLogEntries[(start + i) % DEBUG_LOG_ENTRY_COUNT];
+    portEXIT_CRITICAL(&debugLogMux);
+    char prefix[40];
+    snprintf(prefix, sizeof(prefix), "%10lu %-7s ", (unsigned long)entry.timeMs, debugLogLevelName(entry.level));
+    response += prefix;
+    response += entry.text;
+    response += "\n";
+  }
+  return response;
+}
+
+// Web endpoints used by the browser log viewer.
+void handleDebugLogGet() {
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.send(200, "text/plain", getDebugLogResponse());
+}
+
+void handleDebugLogClear() {
+  clearDebugLog();
+  debugLog(DEBUG_LOG_BASIC, "Debug log cleared");
+  server.send(200, "text/plain", "Debug log cleared");
+}
+
+// ----------------------------------------------------------------------------
+// END DIAGNOSTIC LOGGING SUBSYSTEM
+// ----------------------------------------------------------------------------
+
 WebSocketsServer webSocket(81);
 volatile int webSocketClientCount = 0;
 volatile bool machineStatusForcePublish = false;
 String lastMachineStatus = "";
-//alan4
 String wifiStatus = "No WiFi";
 unsigned long wifiStatusMillis = 0;
 bool startupInfoActive = true;
-//alan4
 bool wifiSetupApActive = false;
 bool wifiStationConnected = false;
 String wifiIpAddress = "";
@@ -4203,6 +4524,12 @@ unsigned long configRestartAt = 0;
 bool keyboardCaptureActive = false;
 byte keyboardCaptureReleaseCode = 0;
 unsigned long keyboardCaptureUntil = 0;
+
+// ============================================================================
+// 5. CONFIGURATION, PREFERENCES, WI-FI AND WEB SERVICES
+// ============================================================================
+// Validation, load/save, HTTP handlers, Wi-Fi startup and configuration import
+// and export. Persistent-format version numbers are defined near the top.
 
 long clampLongValue(long value, long minValue, long maxValue) {
   if (value < minValue) return minValue;
@@ -4249,6 +4576,7 @@ void setMachineConfigDefaults() {
   STEP_TIME_MS = DEFAULT_STEP_TIME_MS;
   DELAY_BETWEEN_STEPS_MS = DEFAULT_DELAY_BETWEEN_STEPS_MS;
   ENABLE_CONTINUOUS_MOVE = DEFAULT_ENABLE_CONTINUOUS_MOVE;
+  ENABLE_SPRING_PASS = DEFAULT_ENABLE_SPRING_PASS;
   SAFE_DISTANCE_DU = DEFAULT_SAFE_DISTANCE_DU;
   SLOT_LEFT_REDUCTION_DU = DEFAULT_SLOT_LEFT_REDUCTION_DU;
   ACTIVE_Y = DEFAULT_ACTIVE_Y;
@@ -4283,6 +4611,7 @@ void setMachineConfigDefaults() {
   INVERT_JOYSTICK_X = DEFAULT_INVERT_JOYSTICK_X;
   INVERT_JOYSTICK_Y = DEFAULT_INVERT_JOYSTICK_Y;
   INVERT_JOYSTICK_BUTTON = DEFAULT_INVERT_JOYSTICK_BUTTON;
+  DEBUG_LOG_LEVEL = DEFAULT_DEBUG_LOG_LEVEL;
 }
 
 void applyDerivedMachineConfig() {
@@ -4332,6 +4661,7 @@ void normalizeMachineConfig() {
   JOYSTICK_NORMAL_REVOLUTIONS_PER_SECOND = clampFloatValue(JOYSTICK_NORMAL_REVOLUTIONS_PER_SECOND, 0.01, 1000.0);
   JOYSTICK_RAPID_REVOLUTIONS_PER_SECOND = clampFloatValue(JOYSTICK_RAPID_REVOLUTIONS_PER_SECOND, 0.01, 1000.0);
   SLOT_LEFT_REDUCTION_DU = clampLongValue(SLOT_LEFT_REDUCTION_DU, 0, 10000000);
+  DEBUG_LOG_LEVEL = clampIntValue(DEBUG_LOG_LEVEL, 0, 5);
   if (SPEED_START_Z > SPEED_MANUAL_MOVE_Z) SPEED_START_Z = SPEED_MANUAL_MOVE_Z;
   if (SPEED_START_X > SPEED_MANUAL_MOVE_X) SPEED_START_X = SPEED_MANUAL_MOVE_X;
   if (SPEED_START_Y > SPEED_MANUAL_MOVE_Y) SPEED_START_Y = SPEED_MANUAL_MOVE_Y;
@@ -4372,8 +4702,10 @@ void loadMachineConfig() {
   STEP_TIME_MS = cfg.getLong(CFG_STEP_TIME_MS, STEP_TIME_MS);
   DELAY_BETWEEN_STEPS_MS = cfg.getLong(CFG_DELAY_BETWEEN_STEPS_MS, DELAY_BETWEEN_STEPS_MS);
   ENABLE_CONTINUOUS_MOVE = cfg.getBool(CFG_ENABLE_CONTINUOUS_MOVE, ENABLE_CONTINUOUS_MOVE);
+  ENABLE_SPRING_PASS = cfg.getBool(CFG_ENABLE_SPRING_PASS, ENABLE_SPRING_PASS);
   SAFE_DISTANCE_DU = cfg.getLong(CFG_SAFE_DISTANCE_DU, SAFE_DISTANCE_DU);
   SLOT_LEFT_REDUCTION_DU = cfg.getLong(CFG_SLOT_LEFT_REDUCTION_DU, SLOT_LEFT_REDUCTION_DU);
+  DEBUG_LOG_LEVEL = cfg.getInt(CFG_DEBUG_LOG_LEVEL, DEBUG_LOG_LEVEL);
   ACTIVE_Y = cfg.getBool(CFG_ACTIVE_Y, ACTIVE_Y);
   ROTARY_Y = cfg.getBool(CFG_ROTARY_Y, ROTARY_Y);
   MOTOR_STEPS_Y = cfg.getLong(CFG_MOTOR_STEPS_Y, MOTOR_STEPS_Y);
@@ -4442,8 +4774,10 @@ void saveMachineConfig() {
   cfg.putLong(CFG_STEP_TIME_MS, STEP_TIME_MS);
   cfg.putLong(CFG_DELAY_BETWEEN_STEPS_MS, DELAY_BETWEEN_STEPS_MS);
   cfg.putBool(CFG_ENABLE_CONTINUOUS_MOVE, ENABLE_CONTINUOUS_MOVE);
+  cfg.putBool(CFG_ENABLE_SPRING_PASS, ENABLE_SPRING_PASS);
   cfg.putLong(CFG_SAFE_DISTANCE_DU, SAFE_DISTANCE_DU);
   cfg.putLong(CFG_SLOT_LEFT_REDUCTION_DU, SLOT_LEFT_REDUCTION_DU);
+  cfg.putInt(CFG_DEBUG_LOG_LEVEL, DEBUG_LOG_LEVEL);
   cfg.putBool(CFG_ACTIVE_Y, ACTIVE_Y);
   cfg.putBool(CFG_ROTARY_Y, ROTARY_Y);
   cfg.putLong(CFG_MOTOR_STEPS_Y, MOTOR_STEPS_Y);
@@ -4631,8 +4965,10 @@ bool readMachineConfigFromRequest(String* error) {
     readLongConfigArg("stepTimeMs", &STEP_TIME_MS, 1, 10000, error) &&
     readLongConfigArg("delayBetweenStepsMs", &DELAY_BETWEEN_STEPS_MS, 0, 10000, error) &&
     readBoolConfigArg("enableContinuousMove", &ENABLE_CONTINUOUS_MOVE, error) &&
+    readBoolConfigArg("enableSpringPass", &ENABLE_SPRING_PASS, error) &&
     readLongConfigArg("safeDistanceDu", &SAFE_DISTANCE_DU, 0, 10000000, error) &&
     readLongConfigArg("slotLeftReductionDu", &SLOT_LEFT_REDUCTION_DU, 0, 10000000, error) &&
+    readIntConfigArg("debugLogLevel", &DEBUG_LOG_LEVEL, 0, 5, error) &&
     readBoolConfigArg("activeY", &ACTIVE_Y, error) &&
     readBoolConfigArg("rotaryY", &ROTARY_Y, error) &&
     readLongConfigArg("yMotorSteps", &MOTOR_STEPS_Y, 1, 1000000, error) &&
@@ -5054,8 +5390,10 @@ String getMachineConfigResponse() {
   appendConfigLine(&response, "stepTimeMs", STEP_TIME_MS);
   appendConfigLine(&response, "delayBetweenStepsMs", DELAY_BETWEEN_STEPS_MS);
   appendConfigLine(&response, "enableContinuousMove", ENABLE_CONTINUOUS_MOVE);
+  appendConfigLine(&response, "enableSpringPass", ENABLE_SPRING_PASS);
   appendConfigLine(&response, "safeDistanceDu", SAFE_DISTANCE_DU);
   appendConfigLine(&response, "slotLeftReductionDu", SLOT_LEFT_REDUCTION_DU);
+  appendConfigLine(&response, "debugLogLevel", DEBUG_LOG_LEVEL);
   appendConfigLine(&response, "activeY", ACTIVE_Y);
   appendConfigLine(&response, "rotaryY", ROTARY_Y);
   appendConfigLine(&response, "yMotorSteps", MOTOR_STEPS_Y);
@@ -5851,6 +6189,8 @@ void registerWebRoutes() {
   server.on("/gcode/list", HTTP_GET, handleGcodeList);
   server.on("/gcode/get", HTTP_GET, handleGcodeGet);
   server.on("/gcode/remove", HTTP_POST, handleGcodeRemove);
+  server.on("/debuglog", HTTP_GET, handleDebugLogGet);
+  server.on("/debuglog/clear", HTTP_POST, handleDebugLogClear);
   server.on("/config", HTTP_GET, handleConfigGet);
   server.on("/config", HTTP_POST, handleConfigSave);
   server.on("/config/reset", HTTP_POST, handleConfigReset);
@@ -5899,9 +6239,7 @@ bool connectStationWifi() {
 
   wifiStationConnected = true;
   wifiIpAddress = WiFi.localIP().toString();
-  //alan4 setWiFiStatus("See " + wifiIpAddress);
   setWiFiStatus(String(CONTROLLER_VERSION_TEXT) + " See " + wifiIpAddress);
-  //alan4
   Serial.print("Web UI: http://");
   Serial.println(wifiIpAddress);
   return true;
@@ -5919,9 +6257,7 @@ bool startSetupAccessPoint() {
   }
 
   wifiIpAddress = WiFi.softAPIP().toString();
-  //alan4 setWiFiStatus("Setup " + wifiIpAddress);
   setWiFiStatus(String(CONTROLLER_VERSION_TEXT) + " Setup " + wifiIpAddress);
-  //alan4
   Serial.print("Setup AP: ");
   Serial.print(WIFI_SETUP_AP_SSID);
   Serial.print(" / ");
@@ -5980,6 +6316,12 @@ void taskWiFi(void *param) {
   vTaskDelete(NULL);
 }
 
+// ============================================================================
+// 6. DISPLAY, NEXTION AND MACHINE STATUS
+// ============================================================================
+// Nextion communication, screen refresh, status text and operator feedback.
+// Display code reports machine state but does not own motion decisions.
+
 void setAsyncTimerEnable(bool value) {
   if (value) {
     timerStart(async_timer);
@@ -5997,7 +6339,7 @@ void setEmergencyStop(int kind) {
 }
 
 
-//alan2 change axis button text colour when it is disabled
+// Keep the Nextion axis-button text colour consistent with the disabled state.
 
 void updateEnable(Axis* a) {
   if (!a->disabled && (!a->needsRest || a->stepperEnableCounter > 0)) {
@@ -6020,7 +6362,12 @@ void updateEnable(Axis* a) {
     writeNextionCommandRaw(y.disabled ? "bY.pco=65504" : "bY.pco=61439");
   }
 }
-//alan2
+
+// ============================================================================
+// 7. AXIS, SPINDLE AND MOTION CONTROL
+// ============================================================================
+// Unit conversion, target generation, backlash-aware physical moves, stepper
+// timing, spindle tracking, soft-limit enforcement and motion diagnostics.
 
 void stepperEnable(Axis* a, bool value) {
   if (!a->needsRest || !a->active) {
@@ -6113,6 +6460,18 @@ void setIsOnFromLoop(bool on) {
     opIndexAdvanceFlag = false;
     opSubIndex = 0;
     setupIndex = 0;
+
+    // A spring pass starts directly at the first spindle start of the final
+    // programmed depth. With multi-start threading this repeats every start.
+    if (springPassStartPending) {
+      opIndex = (long)(turnPasses - 1) * starts + 1;
+      springPassStartPending = false;
+      springPassActive = true;
+      springPassCount++;
+      debugLog(DEBUG_LOG_AUTO,
+               "SPRING PASS #%u START firstOp=%ld finalPass=%d starts=%d",
+               springPassCount, opIndex, turnPasses, starts);
+    }
   }
 }
 
@@ -6204,11 +6563,13 @@ String printDupr(long value) {
 }
 
 long stepsToDu(Axis* a, long steps) {
-  return round(steps * a->screwPitch / a->motorSteps);
+  if (a->motorSteps == 0) return 0;
+  return lround((double)steps * (double)a->screwPitch / (double)a->motorSteps);
 }
 
 long duToSteps(Axis* a, long du) {
-  return round(du * a->motorSteps / a->screwPitch);
+  if (a->screwPitch == 0) return 0;
+  return lround((double)du * (double)a->motorSteps / (double)a->screwPitch);
 }
 
 long getAxisPosDu(Axis* a) {
@@ -6332,22 +6693,68 @@ Axis* getPitchAxis() {
 bool isGearboxManualMove(Axis* a) {
   return isGearboxMode() && a == getPitchAxis();
 }
+// Return the programmed cutting travel for the final setup preview.
 
-long getPassModeZStart() {
-  if (mode == MODE_TURN || mode == MODE_THREAD) return dupr > 0 ? z.rightStop : z.leftStop;
-  if (mode == MODE_SLOT) return z.rightStop;
-  if (mode == MODE_FACE) return auxForward ? z.rightStop : z.leftStop;
-  if (mode == MODE_ELLIPSE) return dupr > 0 ? z.leftStop : z.rightStop;
-  return z.pos;
+// Pass depths are measured from the displayed axis zero to the stop selected
+// by the cut direction.  The opposite stop is only a travel/safety limit.
+
+long getPassModeZTravel() {
+  long zeroPos = -z.originPos;
+
+  if (mode == MODE_CUT) return 0; // CUT moves X only.
+
+  if (mode == MODE_FACE) {
+    // Z is the auxiliary cutting axis in FACE mode.
+    long endStop = auxForward ? z.leftStop : z.rightStop;
+    return endStop - zeroPos;
+  }
+
+  if (mode == MODE_SLOT) {
+    // SLOT cuts from Z zero toward the selected longitudinal direction.
+    long endStop = auxForward ? z.leftStop : z.rightStop;
+    return endStop - zeroPos;
+  }
+
+  // TURN, THREAD and ELLIPSE use pitch sign for Z cut direction.
+  long endStop = dupr >= 0 ? z.leftStop : z.rightStop;
+  return endStop - zeroPos;
 }
 
-long getPassModeXStart() {
-  if (mode == MODE_TURN || mode == MODE_THREAD) return auxForward ? x.rightStop : x.leftStop;
-  if (mode == MODE_SLOT) return auxForward ? x.rightStop : x.leftStop;
-  if (mode == MODE_FACE || mode == MODE_CUT) return dupr > 0 ? x.rightStop : x.leftStop;
-  if (mode == MODE_ELLIPSE) return x.rightStop;
-  return x.pos;
+long getPassModeXTravel() {
+  long zeroPos = -x.originPos;
+
+  if (mode == MODE_CUT || mode == MODE_FACE) {
+    // Pitch sign selects the X cut direction.
+    long endStop = dupr >= 0 ? x.leftStop : x.rightStop;
+    return endStop - zeroPos;
+  }
+
+  // In TURN, THREAD, ELLIPSE and SLOT, auxForward selects X direction.
+  long endStop = auxForward ? x.leftStop : x.rightStop;
+  return endStop - zeroPos;
 }
+
+// Builds the pass-count confirmation text with the programmed depth per pass.
+// TURN, CUT, SLOT, THREAD and ELLIPSE take depth on X; FACE takes depth on Z.
+// The preview uses the proposed pass count, so it updates immediately while
+// the operator changes the number before the final Start confirmation.
+String buildPassCountMessage(long passes) {
+  passes = max(1L, min((long)PASSES_MAX, passes));
+
+  Axis* depthAxis = mode == MODE_FACE ? &z : &x;
+  long depthTravel = mode == MODE_FACE ? getPassModeZTravel() : getPassModeXTravel();
+  long totalDepthDu = labs(stepsToDu(depthAxis, depthTravel));
+  long depthPerPassDu = (long)llround((double)totalDepthDu / (double)passes);
+
+  String result = String(passes);
+  result += passes == 1 ? " pass cut axis/depth is " : " passes cut axis/depth is ";
+  result += (char)tolower(depthAxis->name);
+  result += "/";
+  result += printDeciMicrons(depthPerPassDu, 4);
+  result += "?";
+  return result;
+}
+
 
 long getNumpadResult() {
   long result = 0;
@@ -6460,14 +6867,10 @@ unsigned long getDisplayUpdateIntervalMs() {
   return webUiIsConnected() ? NEXTION_WEB_UPDATE_INTERVAL_MS : NEXTION_UPDATE_INTERVAL_MS;
 }
 
-//alan4String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int pitchStatusDirection) {
-//alan4  String result = "";
-//alan4
 String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int pitchStatusDirection) {
   if (startupInfoActive) return wifiStatus;
 
   String result = "";
-//alan4
   if (mode != MODE_JOYSTICK && pitchStatusDirection > 0) {
     result = "Pitch +";
   } else if (mode != MODE_JOYSTICK && pitchStatusDirection < 0) {
@@ -6488,19 +6891,17 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
       result = gcodeCommand.substring(0, 20);
     }
   } else if (isPassMode()) {
+    if (!isOn && springPassPrompt) {
+      result = "Spring Pass? Go=Repeat Stop=Finish";
+    } else {
     bool missingZStops = needZStops() && (z.leftStop == LONG_MAX || z.rightStop == LONG_MIN);
     bool missingStops = missingZStops || x.leftStop == LONG_MAX || x.rightStop == LONG_MIN;
     if (!inNumpad && missingStops) {
       result = needZStops() ? "Set all stops" : "Set X stops";
     } else if (numpadResult != 0 && setupIndex == 1) {
-      long passes = min(PASSES_MAX, numpadResult);
-      result = String(passes);
-      if (passes == 1) result += " pass?";
-      else result += " passes?";
+      result = buildPassCountMessage(min((long)PASSES_MAX, numpadResult));
     } else if (!isOn && setupIndex == 1) {
-      result = String(turnPasses);
-      if (turnPasses == 1) result += " pass?";
-      else result += " passes?";
+      result = buildPassCountMessage(turnPasses);
     } else if (!isOn && setupIndex == 2) {
       if (mode == MODE_FACE) {
         result = auxForward ? "Right to left?" : "Left to right?";
@@ -6512,24 +6913,37 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
     } else if (mode == MODE_THREAD && !isOn && setupIndex == 3) {
       result = "Cone ratio " + String(numpadToConeRatio(), 5) + "?";
     } else if (!isOn && setupIndex == getLastSetupIndex()) {
-      long zOffset = getPassModeZStart() - z.pos;
-      long xOffset = getPassModeXStart() - x.pos;
+
+      // Show the programmed cutting travel between the selected stops.
+      // This is independent of the current tool position and displayed zero.
+      long zTravel = getPassModeZTravel();
+      long xTravel = getPassModeXTravel();
       result = "Go";
-      if (zOffset != 0) {
-        result += " ";
-        result += z.name;
-        result += printDeciMicrons(stepsToDu(&z, zOffset), 2);
-      }
-      if (xOffset != 0) {
-        result += " ";
-        result += x.name;
-        result += printDeciMicrons(stepsToDu(&x, xOffset), 2);
-      }
+      result += " ";
+      result += x.name;
+      result += printDeciMicrons(stepsToDu(&x, xTravel), 2);
+      result += " ";
+      result += y.name;
+      result += printDeciMicrons(0, 2);
+      result += " ";
+      result += z.name;
+      result += printDeciMicrons(stepsToDu(&z, zTravel), 2);
       result += "?";
     } else if (mode == MODE_SLOT && isOn && dupr == 0 && !inNumpad) {
       result = "Set pitch";
     } else if (isOn && numpadResult == 0) {
-      result = "Pass " + String(opIndex) + " of " + String(max(opIndex, long(turnPasses * starts)));
+      if (opIndex == 0) {
+        result = "Positioning";
+      } else {
+        long totalPasses = long(turnPasses) * starts;
+        if (springPassActive) {
+          result = "Spring Pass";
+        } else {
+          result = "Pass " + String(min(opIndex, totalPasses)) + " of " + String(totalPasses);
+        }
+      }
+
+    }
     }
   } else if (mode == MODE_CONE) {
     if (numpadResult != 0 && setupIndex == 1) result = "Use ratio " + String(numpadToConeRatio(), 5) + "?";
@@ -6562,19 +6976,14 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
 
   if (inNumpad && result == "") result = "Use " + printDupr(numpadToDeciMicrons()) + "?";
 
-  //alan4
 
   if (result == "" && JOYSTICK_ENABLED && !joystickAvailable) {
   result = joystickStartupWarning.length() > 0
     ? joystickStartupWarning
     : "Joystick not connected";
 }
-//alan4
 
-//alan4  if (result == "" && (millis() - wifiStatusMillis < 7000 || !x.active || x.disabled)) result = wifiStatus;
-//alan4
   if (result == "" && (startupInfoActive || !x.active || x.disabled)) result = wifiStatus;
-//alan4
   if (result == "" && x.active && !x.disabled) result = "Diameter " + printDeciMicrons(abs(2 * getAxisPosDu(&x)), 2);
 
   return result;
@@ -6709,7 +7118,7 @@ void updateDisplay() {
     zRightText = !z.active || z.disabled ? "" : printDistanceToRightStop(&z);
   }
 
-//alan2 hold the axis button text colour to show that the axis is disabled
+// Refresh axis-button text colours so the disabled state survives display updates.
   if (updateLine2) {
     lcdHashLine2 = newHashLine2;
     setText("tX", xText);
@@ -6731,7 +7140,6 @@ void updateDisplay() {
     writeNextionCommandRaw(y.disabled ? "bY.pco=65505" : "bY.pco=61439");
 #endif
   }
-//alan2
 
   long numpadResult = getNumpadResult();
   long gcodeCommandHash = 0;
@@ -6748,7 +7156,7 @@ void updateDisplay() {
       (z.leftStop == LONG_MAX ? 123 : z.leftStop) + (z.rightStop == LONG_MIN ? 1234 : z.rightStop) +
       (x.leftStop == LONG_MAX ? 1235 : x.leftStop) + (x.rightStop == LONG_MIN ? 123456 : x.rightStop) + gcodeCommandHash +
       (mode == MODE_Y ? y.pos + y.originPos + (y.leftStop == LONG_MAX ? 123 : y.leftStop) + (y.rightStop == LONG_MIN ? 1234 : y.rightStop) + y.disabled : 0) +
-      pitchStatusDirection * 149 +
+      pitchStatusDirection * 149 + (springPassPrompt ? 157 : 0) + (springPassActive ? 163 : 0) +
       (mode == MODE_JOYSTICK ? joystickLatheDirectionZ * 97 + joystickLatheDirectionX * 101 + joystickLatheFeedSignZ * 131 + joystickLatheFeedSignX * 137 + joystickLatheRapid * 17 + JOYSTICK_ENABLED * 19 + spindlePosSync * 151 : 0) + x.pos + x.originPos + z.pos;
   bool updateLine3 = lcdHashLine3 != newHashLine3;
   String messageText = "";
@@ -7171,14 +7579,11 @@ float getJoystickDeflection(JoystickAxisState* joystickAxis) {
   }
 
   int delta = joystickAxis->filtered - joystickAxis->center;
-  //alan3 if (*joystickAxis->invert) delta = -delta;
-  //alan3
   if (*joystickAxis->invert) delta = -delta;
 
 // Alan3: Z joystick moves correctly with invert enabled,
 // alan3 but Z joystick limits are reversed, so restore Z pulse sign only.
    if (joystickAxis->axis == &z) delta = -delta;
-//alan3
   int absDelta = abs(delta);
   if (absDelta <= JOYSTICK_DEADBAND) return 0;
 
@@ -7318,6 +7723,12 @@ void initJoystick() {
   joystickAvailable = true;
 }
 
+// ============================================================================
+// 8. JOYSTICK AND HANDWHEEL CONTROL
+// ============================================================================
+// Manual pulse inputs, joystick calibration and filtering, direction handling,
+// queued movement and optional spindle-synchronised joystick operation.
+
 void taskJoystick(void* param) {
   JoystickAxisState* joystickZ = &joystickAxes[JOYSTICK_AXIS_Z];
   JoystickAxisState* joystickX = &joystickAxes[JOYSTICK_AXIS_X];
@@ -7346,7 +7757,6 @@ void taskJoystick(void* param) {
     }
 
     bool moveNeutral = joystickZ->direction == 0 && joystickX->direction == 0;
-//alan
     bool buttonPressed = updateJoystickButton(rawButtonPressed, moveNeutral);
     joystickRapidPressed = buttonPressed;
 
@@ -7388,9 +7798,40 @@ void taskJoystick(void* param) {
   vTaskDelete(NULL);
 }
 
+// Rounds a complete floating-point position calculation once, at the final
+// motor-step boundary.  Keeping the fractional value until the end prevents
+// systematic short moves caused by intermediate integer truncation.
+long roundedStepPosition(double positionSteps) {
+  return (long)llround(positionSteps);
+}
+
+// Calculates an exact linear pass target from fixed start/end positions.
+// Every pass is calculated independently, so rounding cannot accumulate.
+long calcLinearPassTarget(long startPos, long endPos, long passNumber, long passCount) {
+  if (passCount <= 0 || passNumber <= 0) return startPos;
+  if (passNumber >= passCount) return endPos;
+
+  double travel = (double)endPos - (double)startPos;
+  return startPos + roundedStepPosition(travel * (double)passNumber / (double)passCount);
+}
+
+// Threading retains its existing progressively smaller depth increments, but
+// the profile is converted to an absolute target and rounded only once.
+long calcThreadPassTarget(long startPos, long endPos, long passNumber, long passCount) {
+  if (passCount <= 0 || passNumber <= 0) return startPos;
+  if (passNumber >= passCount) return endPos;
+
+  double remaining = (double)(passCount - passNumber) / (double)passCount;
+  double progress = 1.0 - remaining * remaining;
+  double travel = (double)endPos - (double)startPos;
+  return startPos + roundedStepPosition(travel * progress);
+}
+
 // Calculates stepper position from spindle position.
 long posFromSpindleWithModePitch(Axis* a, long s, bool respectStops, long pitch) {
-  long newPos = s * a->motorSteps / a->screwPitch / ENCODER_STEPS_FLOAT * pitch * starts;
+  double newPosExact = (double)s * (double)a->motorSteps * (double)pitch * (double)starts /
+      ((double)a->screwPitch * (double)ENCODER_STEPS_FLOAT);
+  long newPos = roundedStepPosition(newPosExact);
 
   // Respect left/right stops.
   if (respectStops) {
@@ -7410,24 +7851,117 @@ long posFromSpindle(Axis* a, long s, bool respectStops) {
 
 // Calculates spindle position from stepper position.
 long spindleFromPosWithModePitch(Axis* a, long p, long pitch) {
-  return p * a->screwPitch * ENCODER_STEPS_FLOAT / a->motorSteps / (pitch * starts);
+  if (pitch == 0 || starts == 0) return 0;
+  double spindleExact = (double)p * (double)a->screwPitch * (double)ENCODER_STEPS_FLOAT /
+      ((double)a->motorSteps * (double)pitch * (double)starts);
+  return roundedStepPosition(spindleExact);
 }
 
 long spindleFromPos(Axis* a, long p) {
   return spindleFromPosWithModePitch(a, p, dupr);
 }
 
+double diagnosticStepsToMm(Axis* a, long steps);
+
+enum MotionDiagType : uint8_t {
+  MOTION_DIAG_NONE = 0,
+  MOTION_DIAG_FINAL = 1,
+  MOTION_DIAG_EXACT = 2,
+  MOTION_DIAG_APPROACH = 3
+};
+
+const char* motionDiagTypeName(uint8_t type) {
+  switch (type) {
+    case MOTION_DIAG_FINAL: return "FINAL";
+    case MOTION_DIAG_EXACT: return "EXACT";
+    case MOTION_DIAG_APPROACH: return "APPROACH";
+    default: return "UNKNOWN";
+  }
+}
+
+// Starts or updates a diagnostic transaction. Repeated calls with the same
+// target, caused by the operation loop, do not create duplicate records.
+void beginMotionDiagnostic(Axis* a, uint8_t type, long targetTool, long targetMotor,
+                           long startTool, long startMotor) {
+  const bool sameTransaction = a->motionDiagActive &&
+      a->motionDiagType == type &&
+      a->motionDiagTargetTool == targetTool &&
+      a->motionDiagTargetMotor == targetMotor;
+  if (sameTransaction) return;
+
+  uint32_t sequence;
+  portENTER_CRITICAL(&debugLogMux);
+  sequence = ++motionRequestSequence;
+  portEXIT_CRITICAL(&debugLogMux);
+
+  a->motionDiagActive = true;
+  a->motionDiagSequence = sequence;
+  a->motionDiagType = type;
+  a->motionDiagStartTool = startTool;
+  a->motionDiagStartMotor = startMotor;
+  a->motionDiagTargetTool = targetTool;
+  a->motionDiagTargetMotor = targetMotor;
+
+  debugLog(DEBUG_LOG_MOTION,
+           "MOVE START #%lu axis=%c type=%s startTool=%ld startMotor=%ld targetTool=%ld targetMotor=%ld toolCommand=%ld motorCommand=%ld backlash=%ld",
+           (unsigned long)sequence, a->name, motionDiagTypeName(type),
+           startTool, startMotor, targetTool, targetMotor,
+           targetTool - startTool, targetMotor - startMotor, a->backlashSteps);
+}
+
+void completeMotionDiagnostic(Axis* a) {
+  if (!a->motionDiagActive) return;
+
+  const long actualTool = a->pos;
+  const long actualMotor = a->motorPos;
+  const long toolTravel = actualTool - a->motionDiagStartTool;
+  const long motorTravel = actualMotor - a->motionDiagStartMotor;
+  const long commandedToolTravel = a->motionDiagTargetTool - a->motionDiagStartTool;
+  const long commandedMotorTravel = a->motionDiagTargetMotor - a->motionDiagStartMotor;
+  const long toolError = actualTool - a->motionDiagTargetTool;
+  const long motorError = actualMotor - a->motionDiagTargetMotor;
+  const bool passed = toolError == 0 && motorError == 0 && a->pendingPos == 0;
+  const uint8_t level = passed ? DEBUG_LOG_MOTION : DEBUG_LOG_ERROR;
+
+  debugLog(level,
+           "MOVE COMPLETE #%lu axis=%c type=%s status=%s actualTool=%ld actualMotor=%ld toolTravel=%ld toolTravelMm=%.6f motorTravel=%ld motorTravelMm=%.6f",
+           (unsigned long)a->motionDiagSequence, a->name,
+           motionDiagTypeName(a->motionDiagType), passed ? "PASS" : "FAIL",
+           actualTool, actualMotor, toolTravel, diagnosticStepsToMm(a, toolTravel),
+           motorTravel, diagnosticStepsToMm(a, motorTravel));
+  debugLog(level,
+           "MOVE CHECK #%lu axis=%c commandedTool=%ld actualToolTravel=%ld toolError=%ld commandedMotor=%ld actualMotorTravel=%ld motorError=%ld finalOffset=%ld offsetMm=%.6f",
+           (unsigned long)a->motionDiagSequence, a->name,
+           commandedToolTravel, toolTravel, toolError,
+           commandedMotorTravel, motorTravel, motorError,
+           actualMotor - actualTool, diagnosticStepsToMm(a, actualMotor - actualTool));
+
+  a->motionDiagActive = false;
+  a->motionDiagType = MOTION_DIAG_NONE;
+}
+
 bool stepTo(Axis* a, long newPos, bool continuous) {
   if (xSemaphoreTake(a->mutex, 10) == pdTRUE) {
+    const long startPos = a->pos;
+    const long startMotorPos = a->motorPos;
+    const long backlashApplied = (newPos != startPos && newPos <= startPos) ? a->backlashSteps : 0;
+
     a->continuous = continuous;
-    if (newPos == a->pos) {
+    if (newPos == startPos) {
       a->pendingPos = 0;
     } else {
-      a->pendingPos = newPos - a->motorPos - (newPos > a->pos ? 0 : a->backlashSteps);
+      a->pendingPos = newPos - startMotorPos - backlashApplied;
     }
+    const long targetMotorPos = startMotorPos + a->pendingPos;
     xSemaphoreGive(a->mutex);
+
+    if (!continuous && newPos != startPos) {
+      beginMotionDiagnostic(a, MOTION_DIAG_FINAL, newPos, targetMotorPos,
+                            startPos, startMotorPos);
+    }
     return true;
   }
+  debugLog(DEBUG_LOG_ERROR, "MOTION REQ REJECT axis=%c target=%ld reason=mutex", a->name, newPos);
   return false;
 }
 
@@ -7438,6 +7972,111 @@ bool stepToContinuous(Axis* a, long newPos) {
 
 bool stepToFinal(Axis* a, long newPos) {
   return stepTo(a, newPos, false);
+}
+
+// Finish a move at an exact tool coordinate without applying backlash again.
+// This preserves the current motor-to-tool offset and commands only the
+// remaining tool distance. It is used after a spindle-synchronised cut, where
+// backlash has already been taken up at the start of the pass.
+bool stepToExactToolPos(Axis* a, long toolPos, bool continuous) {
+  if (xSemaphoreTake(a->mutex, 10) == pdTRUE) {
+    const long startPos = a->pos;
+    const long startMotorPos = a->motorPos;
+    a->continuous = continuous;
+    const long remainingToolSteps = toolPos - startPos;
+    a->pendingPos = remainingToolSteps;
+    xSemaphoreGive(a->mutex);
+
+    const long targetMotorPos = startMotorPos + remainingToolSteps;
+    if (remainingToolSteps != 0) {
+      beginMotionDiagnostic(a, MOTION_DIAG_EXACT, toolPos, targetMotorPos,
+                            startPos, startMotorPos);
+    }
+    return true;
+  }
+  debugLog(DEBUG_LOG_ERROR, "MOTION REQ REJECT axis=%c target=%ld reason=mutex", a->name, toolPos);
+  return false;
+}
+
+// Move an axis to a tool coordinate with an explicit final approach direction.
+// CUT uses this so completion is based on physical motor position, including
+// the complete configured backlash movement.
+bool stepToToolPosFromDirection(Axis* a, long toolPos, int approachSign, bool continuous) {
+  if (xSemaphoreTake(a->mutex, 10) == pdTRUE) {
+    const long startPos = a->pos;
+    const long startMotorPos = a->motorPos;
+    a->continuous = continuous;
+    const long targetMotorPos = approachSign > 0 ? toolPos : toolPos - a->backlashSteps;
+    a->pendingPos = targetMotorPos - startMotorPos;
+    const long pendingPos = a->pendingPos;
+    xSemaphoreGive(a->mutex);
+
+    if (pendingPos != 0) {
+      beginMotionDiagnostic(a, MOTION_DIAG_APPROACH, toolPos, targetMotorPos,
+                            startPos, startMotorPos);
+    }
+    return true;
+  }
+  debugLog(DEBUG_LOG_ERROR, "MOTION REQ REJECT axis=%c target=%ld reason=mutex", a->name, toolPos);
+  return false;
+}
+
+long motorPosForToolPos(Axis* a, long toolPos, int approachSign) {
+  return approachSign > 0 ? toolPos : toolPos - a->backlashSteps;
+}
+
+// Converts a motor-step distance to millimetres for diagnostics only.
+// Axis screwPitch and stepsToDu() use deci-microns, where 10000 du = 1 mm.
+double diagnosticStepsToMm(Axis* a, long steps) {
+  return (double)stepsToDu(a, steps) / 10000.0;
+}
+
+void logAxisCalibration(Axis* a) {
+  if (!a->active) return;
+  const double stepsPerMm = a->screwPitch != 0.0f
+      ? (double)a->motorSteps * 10000.0 / (double)a->screwPitch
+      : 0.0;
+  debugLog(DEBUG_LOG_MOTION,
+           "AXIS CAL axis=%c motorStepsRev=%.3f screwPitchDu=%.3f screwPitchMm=%.6f stepsPerMm=%.6f",
+           a->name, (double)a->motorSteps, (double)a->screwPitch,
+           (double)a->screwPitch / 10000.0, stepsPerMm);
+  debugLog(DEBUG_LOG_MOTION,
+           "AXIS CAL axis=%c backlashSteps=%ld backlashMm=%.6f pos=%ld motor=%ld offsetSteps=%ld offsetMm=%.6f",
+           a->name, a->backlashSteps, diagnosticStepsToMm(a, a->backlashSteps),
+           a->pos, a->motorPos, a->motorPos - a->pos,
+           diagnosticStepsToMm(a, a->motorPos - a->pos));
+}
+
+bool logMotionCompletionValidation(const char* context, Axis* a, long requestedToolPos,
+                                   long expectedMotorPos) {
+  const long actualToolPos = a->pos;
+  const long actualMotorPos = a->motorPos;
+  const long toolErrorSteps = actualToolPos - requestedToolPos;
+  const long motorOffsetSteps = actualMotorPos - actualToolPos;
+  const long expectedOffsetSteps = expectedMotorPos - requestedToolPos;
+  const long motorErrorSteps = actualMotorPos - expectedMotorPos;
+  const long backlashDifferenceSteps = labs(labs(motorOffsetSteps) - labs(a->backlashSteps));
+  const bool pendingClear = a->pendingPos == 0;
+  const bool passed = toolErrorSteps == 0 && motorErrorSteps == 0 && pendingClear;
+  const uint8_t level = passed ? DEBUG_LOG_AUTO : DEBUG_LOG_ERROR;
+
+  debugLog(level,
+           "MOTION VALIDATE context=%s axis=%c status=%s requestedTool=%ld actualTool=%ld toolErrorSteps=%ld toolErrorMm=%.6f pending=%ld",
+           context, a->name, passed ? "PASS" : "FAIL", requestedToolPos,
+           actualToolPos, toolErrorSteps, diagnosticStepsToMm(a, toolErrorSteps),
+           (long)a->pendingPos);
+  debugLog(level,
+           "MOTION MOTOR context=%s axis=%c expected=%ld actual=%ld errorSteps=%ld errorMm=%.6f offsetSteps=%ld offsetMm=%.6f",
+           context, a->name, expectedMotorPos, actualMotorPos, motorErrorSteps,
+           diagnosticStepsToMm(a, motorErrorSteps), motorOffsetSteps,
+           diagnosticStepsToMm(a, motorOffsetSteps));
+  debugLog(level,
+           "MOTION BACKLASH context=%s axis=%c expectedOffset=%ld expectedOffsetMm=%.6f configuredSteps=%ld configuredMm=%.6f differenceSteps=%ld differenceMm=%.6f",
+           context, a->name, expectedOffsetSteps,
+           diagnosticStepsToMm(a, expectedOffsetSteps), a->backlashSteps,
+           diagnosticStepsToMm(a, a->backlashSteps), backlashDifferenceSteps,
+           diagnosticStepsToMm(a, backlashDifferenceSteps));
+  return passed;
 }
 
 void setDir(Axis* a, bool dir) {
@@ -8056,6 +8695,12 @@ bool handleGcodeCommand(String command) {
   return false;
 }
 
+// ============================================================================
+// 9. G-CODE
+// ============================================================================
+// G-code buffering, parsing, command execution and reporting. G-code requests
+// ultimately pass through the same axis and limit controls as other movement.
+
 void taskGcode(void *param) {
   while (emergencyStop == ESTOP_NONE) {
     if (mode != MODE_GCODE) {
@@ -8330,6 +8975,10 @@ void setModeFromLoop(int value) {
   if (mode == value) {
     return;
   }
+  springPassPrompt = false;
+  springPassStartPending = false;
+  springPassActive = false;
+  springPassCount = 0;
   if (isOn) {
     setIsOnFromLoop(false);
   }
@@ -8481,8 +9130,7 @@ void buttonPlusMinusPress(bool plus) {
 
 void buttonOnOffPress(bool on) {
   resetMillis = millis();
-  //alan4
-  
+
   if (on && startupInfoActive) {
     startupInfoActive = false;
     lcdHashLine3 = 0;
@@ -8490,8 +9138,29 @@ void buttonOnOffPress(bool on) {
   }
 
   bool missingZStops = needZStops() && (z.leftStop == LONG_MAX || z.rightStop == LONG_MIN);
-  
-  //alan4
+
+  // At the spring-pass prompt, GO repeats the final pass and STOP completes
+  // the run. Handle this before the normal setup wizard can consume GO.
+  if (springPassPrompt) {
+    if (on) {
+      springPassPrompt = false;
+      springPassStartPending = true;
+      setIsOnFromTask(true);
+    } else {
+      springPassPrompt = false;
+      springPassStartPending = false;
+      springPassActive = false;
+      debugLog(DEBUG_LOG_AUTO, "SPRING PASS COMPLETE repeats=%u operator pressed STOP", springPassCount);
+      springPassCount = 0;
+      opIndex = 0;
+      opSubIndex = 0;
+      setupIndex = 0;
+      lcdHashLine3 = 0;
+      beep();
+    }
+    return;
+  }
+
   if (on && isPassMode() && (missingZStops || x.leftStop == LONG_MAX || x.rightStop == LONG_MIN)) {
     beep();
   } else if (!isOn && on && mode == MODE_GCODE && gcodeProgramIndex >= gcodeProgramCount && setupIndex == 1) {
@@ -8611,7 +9280,6 @@ void buttonMoveStepPress() {
     }
   }
 }
-//alan
 void buttonMeasurePress() {
   if (!confirmMeasureChange) {
     confirmMeasureChange = true;
@@ -8631,7 +9299,6 @@ void buttonMeasurePress() {
     setMeasure(MEASURE_METRIC);
   }
 }
-//alan
 
 void buttonReversePress() {
   setDupr(-dupr);
@@ -8748,16 +9415,10 @@ bool processNumpadResult(int keyCode) {
     a = &y;
     sign = (keyCode == B_BACK || keyCode == B_STOPB) ? -1 : 1;
   }
-  //alan7long posDiffAbs = (a->rotational ? numpadResult * 10 : newDu) / a->screwPitch * a->motorSteps;
   long posDiffAbs = round((a->rotational ? numpadResult * 10.0 : newDu) * a->motorSteps / a->screwPitch);
-  //alan7
   long pos = a->pos + posDiffAbs * sign;
-  //alan7
   long stopPos = posDiffAbs * sign - a->originPos;
-  
-  
- 
-  
+
 
   // Potentially assign a new value to a limit.
   // Stop entries are absolute distances from the zeroed axis, not offsets from the current axis position.
@@ -8781,7 +9442,6 @@ bool processNumpadResult(int keyCode) {
     return true;
   }
 
-//alan7
 
   // Potentially move by newDu in the given direction.
   // We don't support precision manual moves when ON yet. Can't stay in the thread for most modes.
@@ -8802,27 +9462,15 @@ bool processNumpadResult(int keyCode) {
   }
 
   // Set axis 0 newDu ahead.
-//alan6  if (keyCode == B_Z || keyCode == B_X || keyCode == B_Y) {
-//alan6    a->originPos = -pos;
-//alan6    return true;
-//alan6  }
-//alan6
 if (keyCode == B_Z || keyCode == B_Y) {
   a->originPos = -pos;
   return true;
 }
-//alan6
   // Set X axis 0 from diameter.
-//alan6  if (keyCode == B_DIAMETER || keyCode == B_X_ENA) {
-//alan6    a->originPos = -a->pos - posDiffAbs / 2;
-//alan6    return true;
-//alan6  }
-//alan6
 if (keyCode == B_DIAMETER || keyCode == B_X) {
   a->originPos = -a->pos - posDiffAbs / 2;
   return true;
 }
-//alan6
 
   if (keyCode == B_STEP) {
     if (newDu > 0) {
@@ -9174,6 +9822,12 @@ void processKeypadEvent() {
   }
 }
 
+// ============================================================================
+// 10. KEYBOARD AND MANUAL CONTROLS
+// ============================================================================
+// Nextion key processing, numeric entry, stop/zero controls, manual jogging and
+// requests passed safely from the keyboard task to the main control loop.
+
 void taskKeypad(void *param) {
   while (emergencyStop == ESTOP_NONE) {
     processKeypadEvent();
@@ -9198,6 +9852,7 @@ void moveAxis(Axis* a) {
     return;
   }
 
+  bool diagnosticMoveCompleted = false;
   if (xSemaphoreTake(a->mutex, 1) == pdTRUE) {
     // Check pendingPos again now that we have the mutex.
     if (a->pendingPos != 0) {
@@ -9223,10 +9878,15 @@ void moveAxis(Axis* a) {
         a->speed = a->speedStart;
       }
       a->stepStartUs = nowUs;
+      diagnosticMoveCompleted = a->pendingPos == 0 && a->motionDiagActive;
 
       DHIGH(a->step);
     }
     xSemaphoreGive(a->mutex);
+  }
+
+  if (diagnosticMoveCompleted) {
+    completeMotionDiagnostic(a);
   }
 }
 
@@ -9381,6 +10041,19 @@ void modeJoystick() {
 }
 
 long auxSafeDistance, startOffset;
+// ============================================================================
+// 11. AUTOMATIC MACHINING MODES
+// ============================================================================
+// Automatic-cycle state machines for turning, facing, cone, cut, slot, ellipse
+// and Y-axis operations. opIndex selects the pass; opSubIndex selects its stage.
+//
+// General pass flow:
+//   positioning -> approach/depth -> spindle-synchronised cut -> retract -> next
+// The initial positioning stage is intentionally not counted as a cutting pass.
+
+// Execute one automatic turning/facing-style pass sequence. The main axis
+// performs the spindle-synchronised cut and the auxiliary axis sets depth and
+// retracts fully, including backlash compensation, after every cutting pass.
 void modeTurn(Axis* main, Axis* aux) {
   if (main->movingManually || aux->movingManually || turnPasses <= 0 ||
       main->leftStop == LONG_MAX || main->rightStop == LONG_MIN ||
@@ -9397,8 +10070,12 @@ void modeTurn(Axis* main, Axis* aux) {
   long auxStartStop = auxForward ? aux->rightStop : aux->leftStop;
   long auxEndStop = auxForward ? aux->leftStop : aux->rightStop;
 
+  // All pass-based modes calculate their passes from the displayed axis zero.
+  // The positioning phase moves both axes to zero and is not included in turnPasses.
+  mainStartStop = -main->originPos;
+  auxStartStop = -aux->originPos;
   // opIndex 0 is only executed once, do setup calculations here.
-  auxSafeDistance = (auxForward ? -1 : 1) * SAFE_DISTANCE_DU * aux->motorSteps / aux->screwPitch;
+  auxSafeDistance = (auxForward ? -1 : 1) * duToSteps(aux, SAFE_DISTANCE_DU);
   if (opIndex == 0) {
     startOffset = starts == 1 ? 0 : round(ENCODER_STEPS_FLOAT / starts);
 
@@ -9410,8 +10087,14 @@ void modeTurn(Axis* main, Axis* aux) {
     long mainPos = mainStartStop + (opDuprSign > 0 ? -1 : 1);
     stepToFinal(main, mainPos);
     stepToFinal(aux, auxPos);
-    if (main->pos == mainPos && aux->pos == auxPos) {
+    if (main->pos == mainPos && main->pendingPos == 0 && aux->pos == auxPos && aux->pendingPos == 0) {
       stepToFinal(main, mainStartStop);
+      autoOperationLogStartMs = millis();
+      debugLog(DEBUG_LOG_AUTO,
+               "TURN START passes=%d starts=%d main=%c aux=%c mainStart=%ld mainEnd=%ld auxStart=%ld auxEnd=%ld mainBacklash=%ld auxBacklash=%ld safe=%ld dupr=%ld",
+               turnPasses, starts, main->name, aux->name, mainStartStop, mainEndStop,
+               auxStartStop, auxEndStop, main->backlashSteps, aux->backlashSteps,
+               auxSafeDistance, dupr);
       opIndex = 1;
       opSubIndex = 0;
     }
@@ -9420,13 +10103,14 @@ void modeTurn(Axis* main, Axis* aux) {
       opIndexAdvanceFlag = false;
       opIndex += starts;
     }
-    float fraction = (turnPasses - ceil(opIndex / float(starts))) / turnPasses;
-    if (mode == MODE_THREAD) fraction = fraction * fraction; // make initial passed larger, final passes smaller
-    long auxPos = auxEndStop - (auxEndStop - auxStartStop) * fraction;
+    long passNumber = (opIndex + starts - 1) / starts;
+    long auxPos = mode == MODE_THREAD
+        ? calcThreadPassTarget(auxStartStop, auxEndStop, passNumber, turnPasses)
+        : calcLinearPassTarget(auxStartStop, auxEndStop, passNumber, turnPasses);
     // Bringing X to starting position.
     if (opSubIndex == 0) {
       stepToFinal(aux, auxPos);
-      if (aux->pos == auxPos) {
+      if (aux->pos == auxPos && aux->pendingPos == 0) {
         opSubIndex = 1;
         spindlePosSync = spindleModulo(spindlePosGlobal - spindleFromPos(main, main->posGlobal) + startOffset * (opIndex - 1));
         return; // Instead of jumping to the next step, let spindlePosSync get to 0 first.
@@ -9436,13 +10120,19 @@ void modeTurn(Axis* main, Axis* aux) {
     if (opSubIndex == 1) {
       markOrigin();
       main->speedMax = LONG_MAX;
+      debugLog(DEBUG_LOG_AUTO,
+               "TURN PASS %ld START mainStart=%ld mainEnd=%ld mainPos=%ld mainMotor=%ld auxTarget=%ld auxPos=%ld auxMotor=%ld spindle=%ld sync=%ld",
+               (long)passNumber, mainStartStop, mainEndStop, main->pos, main->motorPos,
+               auxPos, aux->pos, aux->motorPos, spindlePosAvg, spindlePosSync);
       opSubIndex = 2;
       // markOrigin() changed Start/EndStop values, re-calculate them.
       return;
     }
     // Doing the pass cut.
     if (opSubIndex == 2) {
-      // In case we were pushed to the next opIndex before finishing the current one.
+      // Restore the original spindle-following logic from INO22.  The later
+      // endpoint corrections altered the motor/tool backlash relationship and
+      // produced 6.49-6.65 mm physical travel for a displayed 6.00 mm cut.
       long mainTargetPos = posFromSpindle(main, spindlePosAvg, true);
       long auxTargetPos = auxPos;
       if (mode == MODE_THREAD && coneRatio != 0) {
@@ -9455,7 +10145,13 @@ void modeTurn(Axis* main, Axis* aux) {
 
       stepToContinuous(main, mainTargetPos);
       stepToContinuous(aux, auxTargetPos);
-      if (main->pos == mainEndStop || (coneRatio != 0 && aux->pos == (opDuprSign > 0 ? auxStartStop : auxEndStop))) {
+      if (main->pos == mainEndStop ||
+          (coneRatio != 0 && aux->pos == (opDuprSign > 0 ? auxStartStop : auxEndStop))) {
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld END start=%ld end=%ld target=%ld pos=%ld motor=%ld pending=%ld backlash=%ld spindle=%ld global=%ld continuous=%d",
+                 (long)passNumber, mainStartStop, mainEndStop, mainTargetPos,
+                 main->pos, main->motorPos, main->pendingPos, main->backlashSteps,
+                 spindlePosAvg, spindlePosGlobal, main->continuous ? 1 : 0);
         opSubIndex = 3;
       }
     }
@@ -9463,31 +10159,92 @@ void modeTurn(Axis* main, Axis* aux) {
     if (opSubIndex == 3) {
       long auxTargetPos = (mode == MODE_THREAD ? auxStartStop : auxPos) + auxSafeDistance;
       stepToFinal(aux, auxTargetPos);
-      if (aux->pos == auxTargetPos) {
+      if (aux->pos == auxTargetPos && aux->pendingPos == 0) {
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld TOOL RETRACT auxTarget=%ld auxPos=%ld auxMotor=%ld pending=%ld",
+                 (long)passNumber, auxTargetPos, aux->pos, aux->motorPos, aux->pendingPos);
         opSubIndex = 4;
       }
     }
     // Returning to start of main.
     if (opSubIndex == 4) {
       main->speedMax = main->speedManualMove;
-      // Overstep by 1 so that "main" backlash is taken out before "opSubIndex == 2".
-      long mainPos = mainStartStop + (opDuprSign > 0 ? -1 : 1);
-      stepToFinal(main, mainPos);
-      if (main->pos == mainPos) {
-        stepToFinal(main, mainStartStop);
+      const int mainCutSign = mainEndStop > mainStartStop ? 1 : -1;
+      const int mainRetractSign = -mainCutSign;
+      const long mainStartMotor = motorPosForToolPos(main, mainStartStop, mainRetractSign);
+      if (main->motorPos == mainStartMotor && main->pendingPos == 0) {
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld MAIN RETURN targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pending=%ld",
+                 (long)passNumber, mainStartStop, mainStartMotor, main->pos, main->motorPos, main->pendingPos);
+        // Before another pass, take up Z backlash in the cutting direction while
+        // the X tool is still retracted.  Do not let the next spindle-synchronised
+        // cut start from pos=0 with motorPos=-backlashSteps.
+        if (opIndex < turnPasses * starts) {
+          opSubIndex = 5;
+        } else {
+          opSubIndex = 0;
+          opIndex++;
+        }
+      } else if (main->pendingPos == 0) {
+        stepToToolPosFromDirection(main, mainStartStop, mainRetractSign, false);
+      }
+    }
+    // Take up main-axis backlash at the start coordinate before the next pass.
+    if (opSubIndex == 5) {
+      main->speedMax = main->speedManualMove;
+      const int mainCutSign = mainEndStop > mainStartStop ? 1 : -1;
+      const long mainCutStartMotor = motorPosForToolPos(main, mainStartStop, mainCutSign);
+      if (main->motorPos == mainCutStartMotor && main->pendingPos == 0) {
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld MAIN PRELOAD targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pending=%ld",
+                 (long)passNumber, mainStartStop, mainCutStartMotor, main->pos, main->motorPos, main->pendingPos);
         opSubIndex = 0;
         opIndex++;
+      } else if (main->pendingPos == 0) {
+        stepToToolPosFromDirection(main, mainStartStop, mainCutSign, false);
       }
     }
   } else {
-    // Move to right-bottom limit.
+    // Return the feed axis to its exact physical start position, but leave the
+    // cutting axis safely retracted after the final pass.
     main->speedMax = main->speedManualMove;
-    long auxPos = auxStartStop;
-    long mainPos = mainStartStop;
-    stepToFinal(main, mainPos);
+    aux->speedMax = aux->speedManualMove;
+    const int mainCutSign = mainEndStop > mainStartStop ? 1 : -1;
+    const int mainRetractSign = -mainCutSign;
+    const long mainStartMotor = motorPosForToolPos(main, mainStartStop, mainRetractSign);
+    const long auxPos = auxStartStop + auxSafeDistance;
+
+    if (main->motorPos != mainStartMotor && main->pendingPos == 0) {
+      stepToToolPosFromDirection(main, mainStartStop, mainRetractSign, false);
+    }
     stepToFinal(aux, auxPos);
-    if (main->pos == mainPos && aux->pos == auxPos) {
+
+    if (main->motorPos == mainStartMotor && main->pendingPos == 0 &&
+        aux->pos == auxPos && aux->pendingPos == 0) {
+      // Stage 1 diagnostics: prove that both axes reached the endpoints already
+      // required by the existing TURN completion logic. This does not alter motion.
+      const long auxExpectedMotor = aux->motorPos;
+      const bool mainValid = logMotionCompletionValidation(
+          "TURN_MAIN", main, mainStartStop, mainStartMotor);
+      const bool auxValid = logMotionCompletionValidation(
+          "TURN_AUX", aux, auxPos, auxExpectedMotor);
+      debugLog((mainValid && auxValid) ? DEBUG_LOG_AUTO : DEBUG_LOG_ERROR,
+               "TURN COMPLETE status=%s elapsed=%lu mainPos=%ld mainMotor=%ld mainPending=%ld auxPos=%ld auxMotor=%ld auxPending=%ld",
+               (mainValid && auxValid) ? "PASS" : "FAIL",
+               (unsigned long)(millis() - autoOperationLogStartMs), main->pos, main->motorPos,
+               main->pendingPos, aux->pos, aux->motorPos, aux->pendingPos);
       setIsOnFromLoop(false);
+      springPassActive = false;
+      lcdHashLine3 = 0;
+      if (ENABLE_SPRING_PASS) {
+        springPassPrompt = true;
+        debugLog(DEBUG_LOG_AUTO,
+                 "SPRING PASS PROMPT ready=1 completedRepeats=%u", springPassCount);
+      } else {
+        springPassPrompt = false;
+        springPassCount = 0;
+        debugLog(DEBUG_LOG_AUTO, "SPRING PASS disabled; cycle finished normally");
+      }
       beep();
     }
   }
@@ -9543,54 +10300,119 @@ void modeCone() {
   stepToContinuous(&x, round(z.pos * zToXRatio));
 }
 
+// Execute plunge/cut mode. X advances to each calculated depth and returns to
+// its zero-referenced start position after every pass, including the final pass.
 void modeCut() {
-  if (x.movingManually || turnPasses <= 0 || x.leftStop == LONG_MAX || x.rightStop == LONG_MIN || dupr == 0 || dupr * opDuprSign < 0) {
+  // CUT starts and retracts at displayed X zero.
+  const long startStop = -x.originPos;
+
+  if (x.movingManually || turnPasses <= 0 || x.leftStop == LONG_MAX ||
+      x.rightStop == LONG_MIN || dupr == 0 || dupr * opDuprSign < 0) {
+    // Once retract has started, allow it to finish even if normal CUT
+    // prerequisites change.
+    if (opSubIndex < 3) {
+      setIsOnFromLoop(false);
+    }
+    return;
+  }
+
+  const long endStop = opDuprSign > 0 ? x.leftStop : x.rightStop;
+  const long travel = endStop - startStop;
+  if (travel == 0) {
     setIsOnFromLoop(false);
     return;
   }
 
-  long startStop = opDuprSign > 0 ? x.rightStop : x.leftStop;
-  long endStop = opDuprSign > 0 ? x.leftStop : x.rightStop;
+  const int cutSign = travel > 0 ? 1 : -1;
+  const int retractSign = -cutSign;
 
+  // Initial positioning is not counted as a pass. Approach X zero from the
+  // retract direction so the following cutting-direction take-up is defined.
   if (opIndex == 0) {
-    // Move to back limit.
     x.speedMax = x.speedManualMove;
-    long xPos = startStop;
-    stepToFinal(&x, xPos);
-    if (x.pos == xPos) {
+    const long startMotor = motorPosForToolPos(&x, startStop, retractSign);
+    if (x.motorPos == startMotor && x.pendingPos == 0) {
       opIndex = 1;
       opSubIndex = 0;
+    } else if (x.pendingPos == 0) {
+      stepToToolPosFromDirection(&x, startStop, retractSign, false);
     }
-  } else if (opIndex <= turnPasses) {
-    // Set spindlePos and x.pos in sync.
-    if (opSubIndex == 0) {
-      spindlePosAvg = spindlePos = spindleFromPos(&x, x.pos);
-      opSubIndex = 1;
-    }
-    // Doing the pass cut.
-    if (opSubIndex == 1) {
-      x.speedMax = LONG_MAX;
-      long endPos = endStop - (endStop - startStop) / turnPasses * (turnPasses - opIndex);
-      long xPos = posFromSpindle(&x, spindlePosAvg, true);
-      if (dupr > 0 && xPos > endPos) xPos = endPos;
-      else if (dupr < 0 && xPos < endPos) xPos = endPos;
-      stepToContinuous(&x, xPos);
-      if (x.pos == endPos) {
-        opSubIndex = 2;
-      }
-    }
-    // Returning to start.
-    if (opSubIndex == 2) {
-      x.speedMax = x.speedManualMove;
-      stepToFinal(&x, startStop);
-      if (x.pos == startStop) {
-        opSubIndex = 0;
-        opIndex++;
-      }
-    }
+    return;
+  }
+
+  // Intermediate passes round away from zero; the final pass is forced to the
+  // exact selected stop so total programmed depth cannot finish one step short.
+  long endPos;
+  if (opIndex == turnPasses) {
+    endPos = endStop;
   } else {
-    setIsOnFromLoop(false);
-    beep();
+    const double exactDelta = (double)travel * (double)opIndex / (double)turnPasses;
+    const long passDelta = exactDelta >= 0.0 ? (long)ceil(exactDelta) : (long)floor(exactDelta);
+    endPos = startStop + passDelta;
+  }
+
+  const long startMotorCut = motorPosForToolPos(&x, startStop, cutSign);
+  const long endMotorCut = motorPosForToolPos(&x, endPos, cutSign);
+  const long startMotorRetract = motorPosForToolPos(&x, startStop, retractSign);
+
+  // Process exactly one phase per loop so a later command cannot overwrite
+  // motor steps that moveAxis() has not yet executed.
+  switch (opSubIndex) {
+    case 0: // Take up all backlash at X zero in the cutting direction.
+      x.speedMax = x.speedManualMove;
+      if (x.motorPos == startMotorCut && x.pendingPos == 0) {
+        spindlePosAvg = spindlePos = spindleFromPos(&x, startStop);
+        opSubIndex = 1;
+      } else if (x.pendingPos == 0) {
+        stepToToolPosFromDirection(&x, startStop, cutSign, false);
+      }
+      return;
+
+    case 1: { // Spindle-synchronised cutting movement.
+      x.speedMax = LONG_MAX;
+      long xPos = posFromSpindle(&x, spindlePosAvg, true);
+      const bool reached = cutSign > 0 ? xPos >= endPos : xPos <= endPos;
+      if (reached) {
+        opSubIndex = 2;
+      } else {
+        stepToContinuous(&x, xPos);
+      }
+      return;
+    }
+
+    case 2: // Finish at the exact physical motor target for this pass depth.
+      x.speedMax = x.speedManualMove;
+      if (x.motorPos == endMotorCut && x.pendingPos == 0) {
+        opSubIndex = 3;
+      } else if (x.pendingPos == 0) {
+        stepToToolPosFromDirection(&x, endPos, cutSign, false);
+      }
+      return;
+
+    case 3: // Issue the retract, including full backlash movement.
+      x.speedMax = x.speedManualMove;
+      if (x.pendingPos == 0) {
+        stepToToolPosFromDirection(&x, startStop, retractSign, false);
+        opSubIndex = 4;
+      }
+      return;
+
+    case 4: // Wait for complete retract after every pass, including the last.
+      x.speedMax = x.speedManualMove;
+      if (x.motorPos == startMotorRetract && x.pendingPos == 0) {
+        if (opIndex >= turnPasses) {
+          setIsOnFromLoop(false);
+          beep();
+        } else {
+          opIndex++;
+          opSubIndex = 0;
+        }
+      }
+      return;
+
+    default:
+      opSubIndex = 0;
+      return;
   }
 }
 
@@ -9599,6 +10421,8 @@ long duPerSecondToStepsPerSecond(Axis* a, long duPerSecond) {
   return speed < 1 ? 1 : speed;
 }
 
+// Execute slot mode using zero-referenced start positions. Each pass advances X
+// depth, cuts along Z, retracts X, and returns Z before the next pass.
 void modeSlot() {
   if (z.movingManually || x.movingManually || turnPasses <= 0 ||
       z.leftStop == LONG_MAX || z.rightStop == LONG_MIN ||
@@ -9606,10 +10430,12 @@ void modeSlot() {
     setIsOnFromLoop(false);
     return;
   }
-
-  long zStartStop = z.rightStop;
+  // SLOT positioning starts with both axes at their displayed zero positions.
+  // Subsequent pass depths are divided from X zero to the selected X end stop.
+  long zStartStop = -z.originPos;
   long zEndStop = z.leftStop;
-  long xStartStop = auxForward ? x.rightStop : x.leftStop;
+  long xStartStop = -x.originPos;
+
   long xEndStop = auxForward ? x.leftStop : x.rightStop;
 
   if (opIndex == 0) {
@@ -9663,6 +10489,8 @@ void modeSlot() {
   }
 }
 
+// Execute coordinated ellipse motion. Both axes follow spindle-derived progress
+// through each pass and return the auxiliary axis at cycle completion.
 void modeEllipse(Axis* main, Axis* aux) {
   if (main->movingManually || aux->movingManually || turnPasses <= 0 ||
       main->leftStop == LONG_MAX || main->rightStop == LONG_MIN ||
@@ -9831,6 +10659,12 @@ void processSpindleCounter() {
   }
 }
 
+// ============================================================================
+// 12. SETTINGS APPLICATION, SETUP AND MAIN LOOP
+// ============================================================================
+// Applies cross-task requests, initialises hardware and services, and runs the
+// deterministic control loop that coordinates spindle, motion and auto modes.
+
 // Apply changes requested by the keyboard thread.
 void applySettings() {
   if (nextDuprFlag) {
@@ -9965,21 +10799,24 @@ void setup() {
     gcodeProgramCount = getGcodeProgramCount();
   }
 
-  // Debug.
+  // Serial diagnostics.
   Serial.begin(115200);
+  logAxisCalibration(&x);
+  logAxisCalibration(&z);
+  if (ACTIVE_Y) logAxisCalibration(&y);
   if (WIFI_ENABLED) {
     webUiEventQueue = xQueueCreate(WEB_UI_EVENT_QUEUE_LENGTH, sizeof(WebUiEvent));
   }
 
-  // Nextion.
+  // Nextion display interface.
   Serial1.begin(NEXTION_NORMAL_BAUD, SERIAL_8N1, 44, 43);
 
-  // Initialize the keyboard.
+  // Keyboard input task.
   keyboard.begin(KEY_DATA, KEY_CLOCK);
   xTaskCreatePinnedToCore(taskKeypad, "taskKeypad", 10000 /* stack size */, NULL, 0 /* priority */, NULL, 0 /* core */);
   if (joystickUsable()) xTaskCreatePinnedToCore(taskJoystick, "taskJoystick", 4000 /* stack size */, NULL, 0 /* priority */, NULL, 0 /* core */);
 
-  // Non-time-sensitive tasks on core 0.
+  // Non-time-sensitive worker tasks on core 0.
   delay(1300); // Nextion needs time to boot or first display update will be ignored.
   if (xTaskCreatePinnedToCore(taskAttachInterrupts, "taskAttachInterrupts", 10000 /* stack size */, NULL, 0 /* priority */, NULL, 0 /* core */) == pdPASS) {
     while (!pulseCountersReady) {
@@ -9995,11 +10832,9 @@ void setup() {
 }
 
 void loop() {
-  //alan
   if (confirmMeasureChange && millis() - confirmMeasureTime > 3000) {
     confirmMeasureChange = false;
   }
-  //alan
   if (emergencyStop != ESTOP_NONE) {
     return;
   }
@@ -10013,7 +10848,8 @@ void loop() {
     cancelJoystickLatheSync();
     resetJoystickLatheFeedPosition();
   }
-  if (!isOn || (dupr == 0 && mode != MODE_SLOT) || spindlePosSync != 0) {
+  const bool cutRetracting = mode == MODE_CUT && (opSubIndex == 3 || opSubIndex == 4);
+  if (!isOn || (((dupr == 0 && mode != MODE_SLOT) || spindlePosSync != 0) && !cutRetracting)) {
     // None of the modes work.
     if (mode == MODE_JOYSTICK && (!isOn || dupr == 0)) {
       resetJoystickLatheFeedPosition();
