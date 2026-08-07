@@ -247,7 +247,7 @@ const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 // SOFTWARE AND HARDWARE IDENTIFICATION
 // -----------------------------------------------------------------------------
 // To be incremented whenever a measurable improvement is made.
-#define SOFTWARE_VERSION 3717
+#define SOFTWARE_VERSION 3817
 // To be changed whenever a different PCB / encoder / stepper / ... design is used.
 #define HARDWARE_VERSION 5
 
@@ -3980,7 +3980,7 @@ void buttonOnOffPress(bool on);
 void resetJoystickLatheFeedPosition();
 void cancelJoystickLatheSync();
 void resetJoystickLatheFeed();
-
+void updateAsyncTimerSettings();
 // Operator input and controller state.
 
 bool inNumpad = false;
@@ -6453,6 +6453,9 @@ void setIsOnFromLoop(bool on) {
     markOrigin();
   }
   if (on) {
+    if (mode == MODE_ASYNC || mode == MODE_Y) {
+      updateAsyncTimerSettings();
+    }
     isOn = true;
     opDuprSign = dupr >= 0 ? 1 : -1;
     opDupr = dupr;
