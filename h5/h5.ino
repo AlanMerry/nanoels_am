@@ -1,4 +1,4 @@
-// https://github.com/kachurovskiy/nanoels
+// SAFE RECOVERY BASELINE 20260828: last confirmed working chamfer build; no automatic Cone changes included.\n// https://github.com/kachurovskiy/nanoels
 //
 // NanoELS H5 single-file source layout
 // Software revision 3716: added optional repeatable spring pass after the final pass.
@@ -100,6 +100,14 @@ bool ENABLE_CONTINUOUS_MOVE = DEFAULT_ENABLE_CONTINUOUS_MOVE;
 // Optional post-cycle repetition of the final programmed pass.
 const bool DEFAULT_ENABLE_SPRING_PASS = false;
 bool ENABLE_SPRING_PASS = DEFAULT_ENABLE_SPRING_PASS;
+
+// Optional TURN/FACE finishing chamfer. Angle is measured from the Z axis.
+// The entered chamfer distance is the Z-axis leg of the finished chamfer;
+// the required X-axis leg is calculated as Z * tan(angle).
+const float DEFAULT_CHAMFER_ANGLE_DEG = 45.0f;
+const long DEFAULT_CHAMFER_DISTANCE_DU = 0;
+float CHAMFER_ANGLE_DEG = DEFAULT_CHAMFER_ANGLE_DEG;
+long CHAMFER_DISTANCE_DU = DEFAULT_CHAMFER_DISTANCE_DU;
 
 // Connect to WiFi and expose web UI to control and receive GCode.
 // Credentials are stored in ESP32 Preferences and can be changed from the Web UI.
@@ -247,7 +255,7 @@ const int GCODE_MIN_RPM = 30; // pause GCode execution if RPM is below this
 // SOFTWARE AND HARDWARE IDENTIFICATION
 // -----------------------------------------------------------------------------
 // To be incremented whenever a measurable improvement is made.
-#define SOFTWARE_VERSION 3817
+#define SOFTWARE_VERSION 3818
 // To be changed whenever a different PCB / encoder / stepper / ... design is used.
 #define HARDWARE_VERSION 5
 
@@ -494,6 +502,8 @@ const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBin
 #define PREF_MEASURE "mea"
 #define PREF_CONE_RATIO "cr"
 #define PREF_TURN_PASSES "tp"
+#define PREF_FACE_PASSES "fp"
+#define PREF_CHAMFER_PASSES "cp"
 #define PREF_MOVE_STEP "ms"
 #define PREF_AUX_FORWARD "af"
 
@@ -529,6 +539,8 @@ const int KEYBOARD_BINDING_COUNT = sizeof(keyboardBindings) / sizeof(keyboardBin
 #define CFG_DELAY_BETWEEN_STEPS_MS "stepDelay"
 #define CFG_ENABLE_CONTINUOUS_MOVE "contStep"
 #define CFG_ENABLE_SPRING_PASS "springPass"
+#define CFG_CHAMFER_ANGLE "chamferAngle"
+#define CFG_CHAMFER_DISTANCE_DU "chamferDistDu"
 #define CFG_SAFE_DISTANCE_DU "safeDistDu"
 #define CFG_SLOT_LEFT_REDUCTION_DU "slotLeftDu"
 #define CFG_DEBUG_LOG_LEVEL "debugLog"
@@ -2018,7 +2030,9 @@ const char indexhtml[] PROGMEM = R"rawliteral(
         fields: [
           { key: 'safeDistanceDu', label: 'Safe retract distance', unit: 'mm', min: 0, max: 1000, step: 0.0001, firmwareScale: 10000, help: 'Distance the auxiliary axis backs away from the material between automated passes. Set to 0 to disable the extra retract.' },
           { key: 'slotLeftReductionDu', label: 'Slot left reduction', unit: 'mm/pass', min: 0, max: 1000, step: 0.0001, firmwareScale: 10000, help: 'Shortens each successive slotting left cut by this Z distance for blind slots. Set to 0 for full-length passes.' },
-          { key: 'enableSpringPass', label: 'Enable spring pass', type: 'checkbox', help: 'After the final programmed pass, offer repeated final-depth passes. GO repeats; STOP finishes.' }
+          { key: 'enableSpringPass', label: 'Enable spring pass', type: 'checkbox', help: 'After the final programmed pass, offer repeated final-depth passes. GO repeats; STOP finishes.' },
+          { key: 'chamferAngle', label: 'Default chamfer angle', unit: 'deg', type: 'number', min: 1, max: 89, step: 0.1, help: 'Default chamfer angle for TURN and FACE, measured from the Z axis. 45 degrees gives equal X and Z movement.' },
+          { key: 'chamferDistanceDu', label: 'Default chamfer Z distance', unit: 'mm', type: 'number', min: 0, max: 1000, step: 0.0001, firmwareScale: 10000, help: 'Enter the chamfer size as the Z-axis distance from Z zero. X travel is calculated automatically as Z x tan(angle). Set to 0 to disable chamfer by default; the value can be changed during TURN/FACE setup for each job.' }
         ]
       },
       {
@@ -3977,10 +3991,12 @@ String joystickStartupWarning = "";
 void adjustPitch(bool plus);
 void buttonPlusMinusPress(bool plus);
 void buttonOnOffPress(bool on);
+int getActivePassCount();
 void resetJoystickLatheFeedPosition();
 void cancelJoystickLatheSync();
 void resetJoystickLatheFeed();
 void updateAsyncTimerSettings();
+void resetNumpad();
 // Operator input and controller state.
 
 bool inNumpad = false;
@@ -4043,6 +4059,9 @@ struct Axis {
   long motionDiagStartMotor;
   long motionDiagTargetTool;
   long motionDiagTargetMotor;
+  uint32_t stepPulseCount; // actual STEP pulses emitted by moveAxis()
+  int8_t lastPhysicalMoveDir; // -1/0/+1 direction of most recent emitted STEP pulse; 0 = unknown since startup
+  uint32_t motionDiagStartStepPulses;
 
   long leftStop; // left stop value of pos
   long savedLeftStop; // value saved in Preferences
@@ -4122,6 +4141,9 @@ void initAxis(Axis* a, char name, bool active, bool rotational, float motorSteps
   a->motionDiagStartMotor = 0;
   a->motionDiagTargetTool = 0;
   a->motionDiagTargetMotor = 0;
+  a->stepPulseCount = 0;
+  a->lastPhysicalMoveDir = 0; // do not assume backlash direction after power-up
+  a->motionDiagStartStepPulses = 0;
 
   a->leftStop = 0;
   a->savedLeftStop = 0;
@@ -4262,6 +4284,10 @@ bool nextConeRatioFlag = false; // whether nextConeRatio requires attention
 
 int turnPasses = 3; // In turn mode, how many turn passes to make
 int savedTurnPasses = 0; // value of turnPasses saved in Preferences
+int facePasses = 3; // In FACE mode, how many facing passes to make
+int savedFacePasses = 0; // value of facePasses saved in Preferences
+int chamferSetupPasses = 3; // Independent FACE chamfer pass count
+int savedChamferSetupPasses = 0; // value saved in Preferences
 
 long setupIndex = 0; // Index of automation setup step
 bool auxForward = true; // True for external, false for internal thread
@@ -4273,12 +4299,66 @@ long opSubIndex = 0; // Sub-index of an automation operation
 int opDuprSign = 1; // 1 if dupr was positive when operation started, -1 if negative
 long opDupr = 0; // dupr that the multi-pass operation started with
 
+// One-shot request used when an automatic TURN/FACE cycle pauses for a
+// Spring/Chamfer continuation.  Normal OFF processing calls markOrigin(),
+// which would otherwise rebase the user-set X/Z zero and corrupt the
+// following chamfer geometry/pass-depth calculation.
+bool preserveAutoJobOriginOnStop = false;
+
 // Spring-pass state. After a completed TURN/FACE/THREAD cycle, the controller
 // waits with the tool retracted. GO repeats the final-depth pass; STOP exits.
 bool springPassPrompt = false;
 bool springPassStartPending = false;
 bool springPassActive = false;
 unsigned int springPassCount = 0;
+
+// Chamfer runtime state. The per-job distance starts from the configured
+// default and can be changed during TURN/FACE setup. Zero disables chamfer.
+long chamferDistanceDu = 0;
+bool chamferPrompt = false;
+bool chamferStartPending = false;
+bool nextChamferStartFlag = false;
+bool chamferActive = false;
+// Latches a chamfer setup/runtime abort until STOP or a mode change.
+// This prevents a subsequent GO press from falling through into the normal
+// TURN/FACE setup path and restarting the machining passes.
+bool chamferAbortLatch = false;
+int chamferPass = 0;
+int chamferPasses = 0;
+long chamferNominalDepthDu = 0; // frozen for the entire chamfer cycle
+// Local spindle references used only while a chamfer cut is running.
+// These let the chamfer reuse Maxim's Cone-mode spindle-derived motion
+// without modifying the user's saved coneRatio or normal TURN/FACE pitch.
+long chamferSpindleStart = 0;
+long chamferSavedZOrigin = 0;
+long chamferSavedXOrigin = 0;
+long chamferSavedSpindleOrigin = 0;
+long chamferSavedZPos = 0;
+long chamferSavedXPos = 0;
+long chamferSavedZMotor = 0;
+long chamferSavedXMotor = 0;
+unsigned long chamferPositionStageStartMs = 0;
+int chamferPositionStageTracked = -999;
+long chamferSpindleZBase = 0;
+long chamferConePitch = 0;
+
+// Exact Z tool position at the end of the most recent FACE cutting pass,
+// captured BEFORE the normal FACE retract. Chamfer restores this real
+// machined-face reference before it begins its own positioning.
+bool faceFinalCutCaptured = false;
+long faceFinalCutZPos = 0;
+long faceFinalCutZMotor = 0;
+
+// Finished FACE surface in the user's origin-relative coordinate system.
+// Unlike raw z.pos, this remains meaningful if originPos changes during
+// spring-pass / automatic positioning.
+long faceFinalCutZCoord = 0;
+
+// Exact diameter most recently entered with B_DIAMETER/B_X.
+// Used only by the initial FACE "Diameter ..." status message so that this
+// display does not drift with carriage position. The normal axis/second
+// diameter display remains unchanged.
+long lastEnteredDiameterDu = 0;
 
 String gcodeCommand = "";
 long gcodeFeedDuPerSec = GCODE_FEED_DEFAULT_DU_SEC;
@@ -4577,6 +4657,8 @@ void setMachineConfigDefaults() {
   DELAY_BETWEEN_STEPS_MS = DEFAULT_DELAY_BETWEEN_STEPS_MS;
   ENABLE_CONTINUOUS_MOVE = DEFAULT_ENABLE_CONTINUOUS_MOVE;
   ENABLE_SPRING_PASS = DEFAULT_ENABLE_SPRING_PASS;
+  CHAMFER_ANGLE_DEG = DEFAULT_CHAMFER_ANGLE_DEG;
+  CHAMFER_DISTANCE_DU = DEFAULT_CHAMFER_DISTANCE_DU;
   SAFE_DISTANCE_DU = DEFAULT_SAFE_DISTANCE_DU;
   SLOT_LEFT_REDUCTION_DU = DEFAULT_SLOT_LEFT_REDUCTION_DU;
   ACTIVE_Y = DEFAULT_ACTIVE_Y;
@@ -4639,6 +4721,8 @@ void normalizeMachineConfig() {
   SPEED_MANUAL_MOVE_X = clampLongValue(SPEED_MANUAL_MOVE_X, 1, 1000000);
   MAX_TRAVEL_MM_X = clampLongValue(MAX_TRAVEL_MM_X, 1, 10000);
   BACKLASH_DU_X = clampLongValue(BACKLASH_DU_X, 0, 10000000);
+  CHAMFER_ANGLE_DEG = max(1.0f, min(89.0f, CHAMFER_ANGLE_DEG));
+  CHAMFER_DISTANCE_DU = clampLongValue(CHAMFER_DISTANCE_DU, 0, 10000000);
   STEP_TIME_MS = clampLongValue(STEP_TIME_MS, 1, 10000);
   DELAY_BETWEEN_STEPS_MS = clampLongValue(DELAY_BETWEEN_STEPS_MS, 0, 10000);
   SAFE_DISTANCE_DU = clampLongValue(SAFE_DISTANCE_DU, 0, 10000000);
@@ -4703,6 +4787,8 @@ void loadMachineConfig() {
   DELAY_BETWEEN_STEPS_MS = cfg.getLong(CFG_DELAY_BETWEEN_STEPS_MS, DELAY_BETWEEN_STEPS_MS);
   ENABLE_CONTINUOUS_MOVE = cfg.getBool(CFG_ENABLE_CONTINUOUS_MOVE, ENABLE_CONTINUOUS_MOVE);
   ENABLE_SPRING_PASS = cfg.getBool(CFG_ENABLE_SPRING_PASS, ENABLE_SPRING_PASS);
+  CHAMFER_ANGLE_DEG = cfg.getFloat(CFG_CHAMFER_ANGLE, CHAMFER_ANGLE_DEG);
+  CHAMFER_DISTANCE_DU = cfg.getLong(CFG_CHAMFER_DISTANCE_DU, CHAMFER_DISTANCE_DU);
   SAFE_DISTANCE_DU = cfg.getLong(CFG_SAFE_DISTANCE_DU, SAFE_DISTANCE_DU);
   SLOT_LEFT_REDUCTION_DU = cfg.getLong(CFG_SLOT_LEFT_REDUCTION_DU, SLOT_LEFT_REDUCTION_DU);
   DEBUG_LOG_LEVEL = cfg.getInt(CFG_DEBUG_LOG_LEVEL, DEBUG_LOG_LEVEL);
@@ -4775,6 +4861,8 @@ void saveMachineConfig() {
   cfg.putLong(CFG_DELAY_BETWEEN_STEPS_MS, DELAY_BETWEEN_STEPS_MS);
   cfg.putBool(CFG_ENABLE_CONTINUOUS_MOVE, ENABLE_CONTINUOUS_MOVE);
   cfg.putBool(CFG_ENABLE_SPRING_PASS, ENABLE_SPRING_PASS);
+  cfg.putFloat(CFG_CHAMFER_ANGLE, CHAMFER_ANGLE_DEG);
+  cfg.putLong(CFG_CHAMFER_DISTANCE_DU, CHAMFER_DISTANCE_DU);
   cfg.putLong(CFG_SAFE_DISTANCE_DU, SAFE_DISTANCE_DU);
   cfg.putLong(CFG_SLOT_LEFT_REDUCTION_DU, SLOT_LEFT_REDUCTION_DU);
   cfg.putInt(CFG_DEBUG_LOG_LEVEL, DEBUG_LOG_LEVEL);
@@ -4966,6 +5054,8 @@ bool readMachineConfigFromRequest(String* error) {
     readLongConfigArg("delayBetweenStepsMs", &DELAY_BETWEEN_STEPS_MS, 0, 10000, error) &&
     readBoolConfigArg("enableContinuousMove", &ENABLE_CONTINUOUS_MOVE, error) &&
     readBoolConfigArg("enableSpringPass", &ENABLE_SPRING_PASS, error) &&
+    readFloatConfigArg("chamferAngle", &CHAMFER_ANGLE_DEG, 1.0, 89.0, error) &&
+    readLongConfigArg("chamferDistanceDu", &CHAMFER_DISTANCE_DU, 0, 10000000, error) &&
     readLongConfigArg("safeDistanceDu", &SAFE_DISTANCE_DU, 0, 10000000, error) &&
     readLongConfigArg("slotLeftReductionDu", &SLOT_LEFT_REDUCTION_DU, 0, 10000000, error) &&
     readIntConfigArg("debugLogLevel", &DEBUG_LOG_LEVEL, 0, 5, error) &&
@@ -5391,6 +5481,8 @@ String getMachineConfigResponse() {
   appendConfigLine(&response, "delayBetweenStepsMs", DELAY_BETWEEN_STEPS_MS);
   appendConfigLine(&response, "enableContinuousMove", ENABLE_CONTINUOUS_MOVE);
   appendConfigLine(&response, "enableSpringPass", ENABLE_SPRING_PASS);
+  appendConfigLine(&response, "chamferAngle", CHAMFER_ANGLE_DEG);
+  appendConfigLine(&response, "chamferDistanceDu", CHAMFER_DISTANCE_DU);
   appendConfigLine(&response, "safeDistanceDu", SAFE_DISTANCE_DU);
   appendConfigLine(&response, "slotLeftReductionDu", SLOT_LEFT_REDUCTION_DU);
   appendConfigLine(&response, "debugLogLevel", DEBUG_LOG_LEVEL);
@@ -6434,6 +6526,49 @@ void setIsOnFromTask(bool on) {
   nextIsOnFlag = true;
 }
 
+void startChamferFromLoop() {
+  // Chamfer is a continuation of the completed TURN/FACE job.  Start it
+  // without calling markOrigin() or re-running the normal TURN setup path.
+  if ((mode != MODE_TURN && mode != MODE_FACE) || chamferDistanceDu <= 0) {
+    chamferPrompt = false;
+    chamferStartPending = false;
+    chamferActive = false;
+    return;
+  }
+
+  stepperEnable(&z, true);
+  stepperEnable(&x, true);
+  stepperEnable(&y, true);
+  isOn = true;
+  setupIndex = 0;
+  opIndex = 0;
+  opSubIndex = 0;
+  opIndexAdvanceFlag = false;
+  opDuprSign = dupr >= 0 ? 1 : -1;
+  opDupr = dupr;
+
+  chamferPrompt = false;
+  chamferStartPending = false;
+  chamferAbortLatch = false;
+  chamferActive = true;
+  chamferPass = 1;
+  chamferPasses = 0;
+  chamferNominalDepthDu = 0;
+
+  // FACE must explicitly restore Z from the normal post-facing retract
+  // to the calculated chamfer start before the shared TURN chamfer engine
+  // is allowed to begin.
+  if (mode == MODE_FACE) {
+    opSubIndex = -1;
+  }
+
+  debugLog(DEBUG_LOG_AUTO,
+           "CHAMFER START build=20261104BB dedicated=1 distanceDu=%ld angle=%.2f mode=%d Zpos=%ld Xpos=%ld faceCutCaptured=%d faceCutZ=%ld",
+           chamferDistanceDu, CHAMFER_ANGLE_DEG, mode, z.pos, x.pos,
+           faceFinalCutCaptured ? 1 : 0, faceFinalCutZPos);
+  lcdHashLine3 = 0;
+}
+
 void setIsOnFromLoop(bool on) {
   if (isOn && on) {
     return;
@@ -6449,8 +6584,20 @@ void setIsOnFromLoop(bool on) {
   if (joystickMode) {
     cancelJoystickLatheSync();
     resetJoystickLatheFeedPosition();
-  } else {
+  } else if (!(on && chamferStartPending) &&
+             !(on && springPassStartPending) &&
+             !(preserveAutoJobOriginOnStop && !on)) {
+    // Starting a chamfer or spring pass, and pausing TURN/FACE for continuation,
+    // must preserve the original operator-set machining coordinate system.
+    // In particular, do not re-zero X at the retracted position before a
+    // TURN spring pass, because the following chamfer uses that preserved X0.
     markOrigin();
+  }
+  if (!on && preserveAutoJobOriginOnStop) {
+    debugLog(DEBUG_LOG_AUTO,
+             "AUTO JOB ORIGIN PRESERVED mode=%d Xorigin=%ld Zorigin=%ld Xpos=%ld Zpos=%ld",
+             mode, x.originPos, z.originPos, x.pos, z.pos);
+    preserveAutoJobOriginOnStop = false;
   }
   if (on) {
     if (mode == MODE_ASYNC || mode == MODE_Y) {
@@ -6466,14 +6613,24 @@ void setIsOnFromLoop(bool on) {
 
     // A spring pass starts directly at the first spindle start of the final
     // programmed depth. With multi-start threading this repeats every start.
-    if (springPassStartPending) {
-      opIndex = (long)(turnPasses - 1) * starts + 1;
+    if (chamferStartPending) {
+      chamferStartPending = false;
+      chamferActive = true;
+      chamferPass = 1;
+      // Freeze the pass geometry on the first modeChamfer() call, while the
+      // normal TURN/FACE coordinate system is still active.
+      chamferPasses = 0;
+      chamferNominalDepthDu = 0;
+      debugLog(DEBUG_LOG_AUTO, "CHAMFER START distanceDu=%ld angle=%.2f", chamferDistanceDu, CHAMFER_ANGLE_DEG);
+    } else if (springPassStartPending) {
+      const int activePasses = getActivePassCount();
+      opIndex = (long)(activePasses - 1) * starts + 1;
       springPassStartPending = false;
       springPassActive = true;
       springPassCount++;
       debugLog(DEBUG_LOG_AUTO,
                "SPRING PASS #%u START firstOp=%ld finalPass=%d starts=%d",
-               springPassCount, opIndex, turnPasses, starts);
+               springPassCount, opIndex, activePasses, starts);
     }
   }
 }
@@ -6609,6 +6766,116 @@ String printDistanceToRightStop(Axis* a) {
   return printDeciMicrons(getAxisRightStopDistanceDu(a), 3);
 }
 
+bool isPassMode(); // Forward declaration for cut-field display helpers.
+
+// In pass-based machining modes the stop fields double as the entered cut
+// distance display.  Keep those values stable while positioning and while a
+// pass is actually cutting.  The cached values are refreshed only when the
+// programmed stop/zero changes while idle, or when a cutting pass has completed.
+struct CutFieldDisplayCache {
+  long leftDu = 0;
+  long rightDu = 0;
+  long leftStop = LONG_MAX;
+  long rightStop = LONG_MIN;
+  long originPos = 0;
+  bool valid = false;
+};
+
+CutFieldDisplayCache xCutFieldDisplay;
+CutFieldDisplayCache zCutFieldDisplay;
+
+long getAxisLeftStopDistanceFromZeroDu(Axis* a) {
+  if (a->leftStop == LONG_MAX) return 0;
+  const long zeroPos = -a->originPos;
+  return stepsToDu(a, a->leftStop - zeroPos);
+}
+
+long getAxisRightStopDistanceFromZeroDu(Axis* a) {
+  if (a->rightStop == LONG_MIN) return 0;
+  const long zeroPos = -a->originPos;
+  return stepsToDu(a, zeroPos - a->rightStop);
+}
+
+CutFieldDisplayCache* getCutFieldDisplayCache(Axis* a) {
+  if (a == &x) return &xCutFieldDisplay;
+  if (a == &z) return &zCutFieldDisplay;
+  return nullptr;
+}
+
+void refreshCutFieldDisplayFromZero(Axis* a) {
+  CutFieldDisplayCache* cache = getCutFieldDisplayCache(a);
+  if (cache == nullptr) return;
+  cache->leftDu = getAxisLeftStopDistanceFromZeroDu(a);
+  cache->rightDu = getAxisRightStopDistanceFromZeroDu(a);
+  cache->leftStop = a->leftStop;
+  cache->rightStop = a->rightStop;
+  cache->originPos = a->originPos;
+  cache->valid = true;
+}
+
+void refreshCutFieldDisplayAfterPass(Axis* a) {
+  CutFieldDisplayCache* cache = getCutFieldDisplayCache(a);
+  if (cache == nullptr) return;
+
+  // After a completed machining pass the stop fields show the CURRENT
+  // completed-pass cut position measured from the displayed axis zero.
+  // Do not show the distance still remaining to the final stop.
+  const long zeroPos = -a->originPos;
+  if (a->pos > zeroPos) {
+    // Positive/left direction: tXUp / tZLeft style field.
+    cache->leftDu = stepsToDu(a, a->pos - zeroPos);
+  } else if (a->pos < zeroPos) {
+    // Negative/right direction: tXDown / tZRight style field.
+    cache->rightDu = stepsToDu(a, zeroPos - a->pos);
+  } else {
+    // At zero there is no completed cut distance on either side. Preserve the
+    // inactive side's programmed value; the active side will be updated when
+    // its pass reaches a non-zero position.
+  }
+
+  cache->leftStop = a->leftStop;
+  cache->rightStop = a->rightStop;
+  cache->originPos = a->originPos;
+  cache->valid = true;
+}
+
+void refreshCutFieldDisplaysAfterPass() {
+  refreshCutFieldDisplayAfterPass(&x);
+  refreshCutFieldDisplayAfterPass(&z);
+  // Force the Nextion stop fields to publish the new completed-pass snapshot
+  // immediately, even if neither axis position changes on the next loop.
+  lcdHashLine2 = LCD_HASH_INITIAL;
+}
+
+void ensureCutFieldDisplayCurrent(Axis* a) {
+  CutFieldDisplayCache* cache = getCutFieldDisplayCache(a);
+  if (cache == nullptr) return;
+  // While idle, a new zero or a newly entered stop must immediately become the
+  // displayed programmed value.  Axis position alone is deliberately ignored.
+  if (!cache->valid || (!isOn &&
+      (cache->leftStop != a->leftStop || cache->rightStop != a->rightStop || cache->originPos != a->originPos))) {
+    refreshCutFieldDisplayFromZero(a);
+  }
+}
+
+String printCutFieldLeftStop(Axis* a) {
+  if (a->leftStop == LONG_MAX) return "";
+  ensureCutFieldDisplayCurrent(a);
+  CutFieldDisplayCache* cache = getCutFieldDisplayCache(a);
+  long distanceDu = cache == nullptr ? getAxisLeftStopDistanceFromZeroDu(a) : cache->leftDu;
+  if (a->rotational) return printDegrees(distanceDu);
+  return printDeciMicrons(distanceDu, 3);
+}
+
+String printCutFieldRightStop(Axis* a) {
+  if (a->rightStop == LONG_MIN) return "";
+  ensureCutFieldDisplayCurrent(a);
+  CutFieldDisplayCache* cache = getCutFieldDisplayCache(a);
+  long distanceDu = cache == nullptr ? getAxisRightStopDistanceFromZeroDu(a) : cache->rightDu;
+  if (a->rotational) return printDegrees(distanceDu);
+  return printDeciMicrons(distanceDu, 3);
+}
+
 String printAxisStopDiff(Axis* a, bool addTrailingSpace) {
   String result = "";
   if (a->rotational) {
@@ -6685,7 +6952,8 @@ int getJoystickPitchStatusDirection() {
 int getLastSetupIndex() {
   if (mode == MODE_CONE || mode == MODE_GCODE) return 2;
   if (mode == MODE_THREAD) return 4;
-  if (mode == MODE_TURN || mode == MODE_FACE || mode == MODE_CUT || mode == MODE_ELLIPSE || mode == MODE_SLOT) return 3;
+  if (mode == MODE_TURN || mode == MODE_FACE) return 5;
+  if (mode == MODE_CUT || mode == MODE_ELLIPSE || mode == MODE_SLOT) return 3;
   return 0;
 }
 
@@ -6896,6 +7164,10 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
   } else if (isPassMode()) {
     if (!isOn && springPassPrompt) {
       result = "Spring Pass? Go=Repeat Stop=Finish";
+    } else if (!isOn && chamferPrompt) {
+      result = "Chamfer? Go=Cut Stop=Finish";
+    } else if (chamferActive) {
+      result = "Chamfer " + String(chamferPass) + "/" + String(chamferPasses);
     } else {
     bool missingZStops = needZStops() && (z.leftStop == LONG_MAX || z.rightStop == LONG_MIN);
     bool missingStops = missingZStops || x.leftStop == LONG_MAX || x.rightStop == LONG_MIN;
@@ -6904,7 +7176,7 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
     } else if (numpadResult != 0 && setupIndex == 1) {
       result = buildPassCountMessage(min((long)PASSES_MAX, numpadResult));
     } else if (!isOn && setupIndex == 1) {
-      result = buildPassCountMessage(turnPasses);
+      result = buildPassCountMessage(getActivePassCount());
     } else if (!isOn && setupIndex == 2) {
       if (mode == MODE_FACE) {
         result = auxForward ? "Right to left?" : "Left to right?";
@@ -6915,6 +7187,11 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
       }
     } else if (mode == MODE_THREAD && !isOn && setupIndex == 3) {
       result = "Cone ratio " + String(numpadToConeRatio(), 5) + "?";
+    } else if ((mode == MODE_TURN || mode == MODE_FACE) && !isOn && setupIndex == 3) {
+      long shownDu = inNumpad ? numpadToDeciMicrons() : chamferDistanceDu;
+      result = "Chamfer Z " + printDeciMicrons(shownDu, 4) + "? Go=Accept";
+    } else if ((mode == MODE_TURN || mode == MODE_FACE) && !isOn && setupIndex == 4) {
+      result = "Chamfer passes " + String(chamferSetupPasses) + "? +/- Go";
     } else if (!isOn && setupIndex == getLastSetupIndex()) {
 
       // Show the programmed cutting travel between the selected stops.
@@ -6931,6 +7208,10 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
       result += " ";
       result += z.name;
       result += printDeciMicrons(stepsToDu(&z, zTravel), 2);
+      if (mode == MODE_TURN || mode == MODE_FACE) {
+        result += " Ch";
+        result += printDeciMicrons(chamferDistanceDu, 2);
+      }
       result += "?";
     } else if (mode == MODE_SLOT && isOn && dupr == 0 && !inNumpad) {
       result = "Set pitch";
@@ -6938,7 +7219,7 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
       if (opIndex == 0) {
         result = "Positioning";
       } else {
-        long totalPasses = long(turnPasses) * starts;
+        long totalPasses = long(getActivePassCount()) * starts;
         if (springPassActive) {
           result = "Spring Pass";
         } else {
@@ -6987,7 +7268,19 @@ String buildDisplayMessage(int rpm, long numpadResult, bool spindleStopped, int 
 }
 
   if (result == "" && (startupInfoActive || !x.active || x.disabled)) result = wifiStatus;
-  if (result == "" && x.active && !x.disabled) result = "Diameter " + printDeciMicrons(abs(2 * getAxisPosDu(&x)), 2);
+  if (result == "" && x.active && !x.disabled) {
+    if (mode == MODE_FACE) {
+      // In FACE mode, show a diameter only when the operator explicitly
+      // entered one. Never infer stock diameter from X travel after zeroing.
+      if (lastEnteredDiameterDu > 0) {
+        result = "Diameter " + printDeciMicrons(lastEnteredDiameterDu, 2);
+      } else {
+        result = "Diameter not set";
+      }
+    } else {
+      result = "Diameter " + printDeciMicrons(abs(2 * getAxisPosDu(&x)), 2);
+    }
+  }
 
   return result;
 }
@@ -7111,14 +7404,14 @@ void updateDisplay() {
   String zRightText = "";
   if (updateLine2 || publishStatus) {
     xText = !x.active || x.disabled ? "" : printAxisPos(&x);
-    xLeftText = !x.active || x.disabled ? "" : printDistanceToLeftStop(&x);
-    xRightText = !x.active || x.disabled ? "" : printDistanceToRightStop(&x);
+    xLeftText = !x.active || x.disabled ? "" : (isPassMode() ? printCutFieldLeftStop(&x) : printDistanceToLeftStop(&x));
+    xRightText = !x.active || x.disabled ? "" : (isPassMode() ? printCutFieldRightStop(&x) : printDistanceToRightStop(&x));
     yText = !y.active || y.disabled ? "" : printAxisPos(&y);
     yLeftText = !y.active || y.disabled ? "" : printDistanceToLeftStop(&y);
     yRightText = !y.active || y.disabled ? "" : printDistanceToRightStop(&y);
     zText = !z.active || z.disabled ? "" : printAxisPos(&z);
-    zLeftText = !z.active || z.disabled ? "" : printDistanceToLeftStop(&z);
-    zRightText = !z.active || z.disabled ? "" : printDistanceToRightStop(&z);
+    zLeftText = !z.active || z.disabled ? "" : (isPassMode() ? printCutFieldLeftStop(&z) : printDistanceToLeftStop(&z));
+    zRightText = !z.active || z.disabled ? "" : (isPassMode() ? printCutFieldRightStop(&z) : printDistanceToRightStop(&z));
   }
 
 // Refresh axis-button text colours so the disabled state survives display updates.
@@ -7155,11 +7448,11 @@ void updateDisplay() {
   bool spindleStopped = micros() > spindleEncTime + 100000;
   int pitchStatusDirection = getJoystickPitchStatusDirection();
   long newHashLine3 = z.pos + (showAngle ? spindlePos : -1) + (showTacho ? rpm : -2) + measure + (numpadResult > 0 ? numpadResult : -1) + mode * 5 + dupr +
-      (mode == MODE_CONE ? round(coneRatio * 10000) : 0) + turnPasses + opIndex + setupIndex + gcodeProgramIndex + gcodeProgramCount + spindleStopped * 3 + (isOn ? 139 : -117) + (inNumpad ? 10 : 0) + (auxForward ? 17 : -31) +
+      (mode == MODE_CONE ? round(coneRatio * 10000) : 0) + turnPasses + facePasses * 7 + chamferSetupPasses * 11 + opIndex + setupIndex + gcodeProgramIndex + gcodeProgramCount + spindleStopped * 3 + (isOn ? 139 : -117) + (inNumpad ? 10 : 0) + (auxForward ? 17 : -31) +
       (z.leftStop == LONG_MAX ? 123 : z.leftStop) + (z.rightStop == LONG_MIN ? 1234 : z.rightStop) +
       (x.leftStop == LONG_MAX ? 1235 : x.leftStop) + (x.rightStop == LONG_MIN ? 123456 : x.rightStop) + gcodeCommandHash +
       (mode == MODE_Y ? y.pos + y.originPos + (y.leftStop == LONG_MAX ? 123 : y.leftStop) + (y.rightStop == LONG_MIN ? 1234 : y.rightStop) + y.disabled : 0) +
-      pitchStatusDirection * 149 + (springPassPrompt ? 157 : 0) + (springPassActive ? 163 : 0) +
+      pitchStatusDirection * 149 + (springPassPrompt ? 157 : 0) + (springPassActive ? 163 : 0) + (chamferPrompt ? 167 : 0) + (chamferActive ? 173 : 0) + chamferDistanceDu + chamferPass * 179 +
       (mode == MODE_JOYSTICK ? joystickLatheDirectionZ * 97 + joystickLatheDirectionX * 101 + joystickLatheFeedSignZ * 131 + joystickLatheFeedSignX * 137 + joystickLatheRapid * 17 + JOYSTICK_ENABLED * 19 + spindlePosSync * 151 : 0) + x.pos + x.originPos + z.pos;
   bool updateLine3 = lcdHashLine3 != newHashLine3;
   String messageText = "";
@@ -7183,7 +7476,7 @@ bool saveIfChanged() {
       spindlePos == savedSpindlePos && spindlePosAvg == savedSpindlePosAvg && spindlePosSync == savedSpindlePosSync && savedSpindlePosGlobal == spindlePosGlobal && showAngle == savedShowAngle && showTacho == savedShowTacho && moveStep == savedMoveStep &&
       mode == savedMode && measure == savedMeasure && x.pos == x.savedPos && x.originPos == x.savedOriginPos && x.posGlobal == x.savedPosGlobal && x.motorPos == x.savedMotorPos && x.leftStop == x.savedLeftStop && x.rightStop == x.savedRightStop && x.disabled == x.savedDisabled &&
       y.pos == y.savedPos && y.originPos == y.savedOriginPos && y.posGlobal == y.savedPosGlobal && y.motorPos == y.savedMotorPos && y.leftStop == y.savedLeftStop && y.rightStop == y.savedRightStop && y.disabled == y.savedDisabled &&
-      coneRatio == savedConeRatio && turnPasses == savedTurnPasses && savedAuxForward == auxForward) return false;
+      coneRatio == savedConeRatio && turnPasses == savedTurnPasses && facePasses == savedFacePasses && chamferSetupPasses == savedChamferSetupPasses && savedAuxForward == auxForward) return false;
 
   Preferences pref;
   pref.begin(PREF_NAMESPACE);
@@ -7221,6 +7514,8 @@ bool saveIfChanged() {
   if (y.disabled != y.savedDisabled) pref.putBool(PREF_DISABLED_Y, y.savedDisabled = y.disabled);
   if (coneRatio != savedConeRatio) pref.putFloat(PREF_CONE_RATIO, savedConeRatio = coneRatio);
   if (turnPasses != savedTurnPasses) pref.putInt(PREF_TURN_PASSES, savedTurnPasses = turnPasses);
+  if (facePasses != savedFacePasses) pref.putInt(PREF_FACE_PASSES, savedFacePasses = facePasses);
+  if (chamferSetupPasses != savedChamferSetupPasses) pref.putInt(PREF_CHAMFER_PASSES, savedChamferSetupPasses = chamferSetupPasses);
   if (auxForward != savedAuxForward) pref.putBool(PREF_AUX_FORWARD, savedAuxForward = auxForward);
   pref.end();
   return true;
@@ -7904,6 +8199,7 @@ void beginMotionDiagnostic(Axis* a, uint8_t type, long targetTool, long targetMo
   a->motionDiagStartMotor = startMotor;
   a->motionDiagTargetTool = targetTool;
   a->motionDiagTargetMotor = targetMotor;
+  a->motionDiagStartStepPulses = a->stepPulseCount;
 
   debugLog(DEBUG_LOG_MOTION,
            "MOVE START #%lu axis=%c type=%s startTool=%ld startMotor=%ld targetTool=%ld targetMotor=%ld toolCommand=%ld motorCommand=%ld backlash=%ld",
@@ -7938,6 +8234,12 @@ void completeMotionDiagnostic(Axis* a) {
            commandedToolTravel, toolTravel, toolError,
            commandedMotorTravel, motorTravel, motorError,
            actualMotor - actualTool, diagnosticStepsToMm(a, actualMotor - actualTool));
+  debugLog(level,
+           "MOVE PULSES #%lu axis=%c emitted=%lu expectedMotorPulses=%ld pulseDifference=%ld",
+           (unsigned long)a->motionDiagSequence, a->name,
+           (unsigned long)(a->stepPulseCount - a->motionDiagStartStepPulses),
+           labs(commandedMotorTravel),
+           (long)(a->stepPulseCount - a->motionDiagStartStepPulses) - labs(commandedMotorTravel));
 
   a->motionDiagActive = false;
   a->motionDiagType = MOTION_DIAG_NONE;
@@ -8451,6 +8753,30 @@ void updateAxisSpeeds(long diffX, long diffZ, long diffY) {
   if (x.speedMax < minStepsPerSecX) x.speedMax = minStepsPerSecX;
   if (z.speedMax < minStepsPerSecZ) z.speedMax = minStepsPerSecZ;
   if (y.speedMax < minStepsPerSecY) y.speedMax = minStepsPerSecY;
+}
+
+
+// Set X/Z speeds for a chamfer so both axes preserve the requested geometric
+// ratio and finish together. Unlike updateAxisSpeeds(), this deliberately does
+// not clamp either axis up to the G-code minimum speed after calculating the
+// common move time, because that changes the chamfer angle on short moves.
+void updateChamferAxisSpeeds(long diffX, long diffZ) {
+  const long absX = labs(diffX);
+  const long absZ = labs(diffZ);
+  if (absX == 0 || absZ == 0) return;
+
+  // Choose the shortest duration that keeps both axes at or below their normal
+  // manual-move maximum. This preserves the X:Z step ratio for the whole move.
+  const double secX = (double)absX / (double)max(1L, x.speedManualMove);
+  const double secZ = (double)absZ / (double)max(1L, z.speedManualMove);
+  const double sec = max(secX, secZ);
+
+  x.speedMax = max(1L, (long)llround((double)absX / sec));
+  z.speedMax = max(1L, (long)llround((double)absZ / sec));
+
+  debugLog(DEBUG_LOG_AUTO,
+           "CHAMFER SPEED diffX=%ld diffZ=%ld speedX=%ld speedZ=%ld sec=%.6f",
+           diffX, diffZ, x.speedMax, z.speedMax, sec);
 }
 
 void gcodeWaitEpsilon(int epsilon) {
@@ -8982,6 +9308,18 @@ void setModeFromLoop(int value) {
   springPassStartPending = false;
   springPassActive = false;
   springPassCount = 0;
+  chamferPrompt = false;
+  chamferStartPending = false;
+  nextChamferStartFlag = false;
+  chamferActive = false;
+  chamferAbortLatch = false;
+  faceFinalCutCaptured = false;
+  faceFinalCutZPos = 0;
+  faceFinalCutZMotor = 0;
+  faceFinalCutZCoord = 0;
+  chamferPass = 0;
+  chamferPasses = 0;
+  chamferNominalDepthDu = 0;
   if (isOn) {
     setIsOnFromLoop(false);
   }
@@ -8994,6 +9332,7 @@ void setModeFromLoop(int value) {
   }
   mode = value;
   setupIndex = 0;
+  if (mode == MODE_TURN || mode == MODE_FACE) chamferDistanceDu = CHAMFER_DISTANCE_DU;
   if (mode == MODE_JOYSTICK) {
     resetJoystickLatheFeed();
   }
@@ -9007,11 +9346,31 @@ void setModeFromLoop(int value) {
   }
 }
 
+int getActivePassCount() {
+  return mode == MODE_FACE ? facePasses : turnPasses;
+}
+
 void setTurnPasses(int value) {
   if (isOn) {
     beep();
   } else {
     turnPasses = value;
+  }
+}
+
+void setFacePasses(int value) {
+  if (isOn) {
+    beep();
+  } else {
+    facePasses = value;
+  }
+}
+
+void setActivePassCount(int value) {
+  if (mode == MODE_FACE) {
+    setFacePasses(value);
+  } else {
+    setTurnPasses(value);
   }
 }
 
@@ -9121,11 +9480,20 @@ void buttonPlusMinusPress(bool plus) {
       setStarts(starts + 1);
     }
   } else if (isPassMode() && setupIndex == 1 && getNumpadResult() == 0) {
-    if (minus && turnPasses > 1) {
-      setTurnPasses(turnPasses - 1);
-    } else if (plus && turnPasses < PASSES_MAX) {
-      setTurnPasses(turnPasses + 1);
+    const int activePasses = getActivePassCount();
+    if (minus && activePasses > 1) {
+      setActivePassCount(activePasses - 1);
+    } else if (plus && activePasses < PASSES_MAX) {
+      setActivePassCount(activePasses + 1);
     }
+  } else if ((mode == MODE_TURN || mode == MODE_FACE) && !isOn && setupIndex == 4) {
+    // Keep TURN/FACE chamfer pass adjustment consistent with normal pass-count setup.
+    if (minus && chamferSetupPasses > 1) {
+      chamferSetupPasses--;
+    } else if (plus && chamferSetupPasses < PASSES_MAX) {
+      chamferSetupPasses++;
+    }
+    lcdHashLine3 = 0;
   } else {
     adjustPitch(plus);
   }
@@ -9142,6 +9510,49 @@ void buttonOnOffPress(bool on) {
 
   bool missingZStops = needZStops() && (z.leftStop == LONG_MAX || z.rightStop == LONG_MIN);
 
+  // A failed chamfer must never fall through into the ordinary TURN/FACE
+  // setup state machine. GO is ignored; STOP clears the abort and finishes
+  // the job cleanly.
+  if (chamferAbortLatch) {
+    if (!on) {
+      chamferAbortLatch = false;
+      chamferPrompt = false;
+      chamferStartPending = false;
+      nextChamferStartFlag = false;
+      chamferActive = false;
+      chamferPass = chamferPasses = 0;
+      chamferNominalDepthDu = 0;
+      opIndex = opSubIndex = setupIndex = 0;
+      lcdHashLine3 = 0;
+      debugLog(DEBUG_LOG_AUTO, "CHAMFER ABORT CLEARED operator pressed STOP");
+      beep();
+    } else {
+      debugLog(DEBUG_LOG_AUTO, "CHAMFER ABORT LATCHED GO ignored");
+      beep();
+    }
+    return;
+  }
+
+  // Chamfer confirmation is separate from STOP semantics: GO starts the
+  // finishing chamfer; STOP finishes without further tool motion.
+  if (chamferPrompt) {
+    if (on) {
+      chamferPrompt = false;
+      chamferStartPending = false;
+      nextChamferStartFlag = true;
+    } else {
+      chamferPrompt = false;
+      chamferStartPending = false;
+      chamferActive = false;
+      chamferPass = chamferPasses = 0;
+      chamferNominalDepthDu = 0;
+      opIndex = opSubIndex = setupIndex = 0;
+      lcdHashLine3 = 0;
+      beep();
+    }
+    return;
+  }
+
   // At the spring-pass prompt, GO repeats the final pass and STOP completes
   // the run. Handle this before the normal setup wizard can consume GO.
   if (springPassPrompt) {
@@ -9155,6 +9566,12 @@ void buttonOnOffPress(bool on) {
       springPassActive = false;
       debugLog(DEBUG_LOG_AUTO, "SPRING PASS COMPLETE repeats=%u operator pressed STOP", springPassCount);
       springPassCount = 0;
+      if ((mode == MODE_TURN || mode == MODE_FACE) && chamferDistanceDu > 0) {
+        chamferPrompt = true;
+        lcdHashLine3 = 0;
+        beep();
+        return;
+      }
       opIndex = 0;
       opSubIndex = 0;
       setupIndex = 0;
@@ -9170,8 +9587,30 @@ void buttonOnOffPress(bool on) {
     beep();
   } else if (!isOn && on && setupIndex < getLastSetupIndex()) {
     if (mode == MODE_THREAD && setupIndex == 3) setConeRatio(0);
-    // Move to the next setup step.
+    // TURN/FACE chamfer size accepts the displayed/default value when GO
+    // is pressed without keypad input. FACE then has a separate chamfer-pass
+    // setup step which also defaults to the last-used persistent value.
+    if ((mode == MODE_TURN || mode == MODE_FACE) && setupIndex == 3 && !inNumpad) {
+      debugLog(DEBUG_LOG_AUTO,
+               "CHAMFER SETUP ACCEPT displayedDistanceDu=%ld",
+               chamferDistanceDu);
+    }
+    if ((mode == MODE_TURN || mode == MODE_FACE) && setupIndex == 4 && !inNumpad) {
+      debugLog(DEBUG_LOG_AUTO,
+               "CHAMFER PASSES ACCEPT mode=%d displayedPasses=%d",
+               mode, chamferSetupPasses);
+    }
     setupIndex++;
+    if ((mode == MODE_TURN || mode == MODE_FACE) && setupIndex == 3) {
+      resetNumpad();
+      inNumpad = false;
+      lcdHashLine3 = 0;
+    }
+    if ((mode == MODE_TURN || mode == MODE_FACE) && setupIndex == 4) {
+      resetNumpad();
+      inNumpad = false;
+      lcdHashLine3 = 0;
+    }
   } else if (isOn && on && (mode == MODE_TURN || mode == MODE_FACE || mode == MODE_THREAD)) {
     // Move to the next pass.
     opIndexAdvanceFlag = true;
@@ -9394,7 +9833,14 @@ bool processNumpadResult(int keyCode) {
   // Ignore numpad input unless confirmed with ON.
   if (keyCode == B_ON) {
     if (isPassMode() && setupIndex == 1) {
-      setTurnPasses(int(min(PASSES_MAX, numpadResult)));
+      setActivePassCount(int(min(PASSES_MAX, numpadResult)));
+      setupIndex++;
+    } else if ((mode == MODE_TURN || mode == MODE_FACE) && setupIndex == 3) {
+      chamferDistanceDu = max(0L, newDu);
+      setupIndex++;
+    } else if ((mode == MODE_TURN || mode == MODE_FACE) && setupIndex == 4) {
+      // Chamfer passes are adjusted with + / -. GO accepts the displayed
+      // value; ignore numeric entry at this setup step.
       setupIndex++;
     } else if (mode == MODE_THREAD && setupIndex == 3) {
       setConeRatio(newConeRatio);
@@ -9472,6 +9918,12 @@ if (keyCode == B_Z || keyCode == B_Y) {
   // Set X axis 0 from diameter.
 if (keyCode == B_DIAMETER || keyCode == B_X) {
   a->originPos = -a->pos - posDiffAbs / 2;
+
+  // Preserve exactly what the operator entered for the FACE initial
+  // diameter message. Do not alter the established radius/origin math.
+  if (!a->rotational && newDu > 0) {
+    lastEnteredDiameterDu = newDu;
+  }
   return true;
 }
 
@@ -9687,6 +10139,17 @@ void processKeypadEvent() {
 
   if (keyCode == 0) return;
 
+  // While the startup IP/version screen is active, GO is the only accepted
+  // control. Ignore all other keys completely, including numpad, pitch,
+  // mode, zero, stop and manual-move inputs. This must happen before
+  // processNumpad() so typed numbers cannot alter pitch/state at startup.
+  if (startupInfoActive) {
+    if (isPress && keyCode == B_ON) {
+      buttonOnOffPress(true);
+    }
+    return;
+  }
+
   // Off button always gets handled.
   if (keyCode == B_OFF) {
     buttonOffPressed = isPress;
@@ -9768,6 +10231,8 @@ void processKeypadEvent() {
   } else if (keyCode == B_DISPL) {
     buttonDisplayPress();
   } else if (keyCode == B_X) {
+    // A plain X-zero press is not a diameter entry.
+    lastEnteredDiameterDu = 0;
     markAxis0(&x);
   } else if (keyCode == B_Z) {
     markAxis0(&z);
@@ -9883,6 +10348,8 @@ void moveAxis(Axis* a) {
       a->stepStartUs = nowUs;
       diagnosticMoveCompleted = a->pendingPos == 0 && a->motionDiagActive;
 
+      a->stepPulseCount++;
+      a->lastPhysicalMoveDir = dir ? 1 : -1;
       DHIGH(a->step);
     }
     xSemaphoreGive(a->mutex);
@@ -10054,11 +10521,777 @@ long auxSafeDistance, startOffset;
 //   positioning -> approach/depth -> spindle-synchronised cut -> retract -> next
 // The initial positioning stage is intentionally not counted as a cutting pass.
 
+
+// Shared synchronized Cone motion primitive.  Both native CONE mode and the
+// automatic chamfer call this exact helper, so the X/Z command ordering and
+// actual-Z follower relationship cannot diverge between the two modes.
+//
+// localSpindle is a spindle displacement relative to the caller's chosen
+// origin. zOrigin/xOrigin offset the native cone line to the required physical
+// start point. zToXRatio is in step space (X steps per Z step), exactly like
+// modeCone().
+void stepConeSynchronized(long localSpindle, long pitchDu,
+                          long zOrigin, long xOrigin,
+                          double zToXRatio,
+                          long zMin, long zMax) {
+  long zTarget = zOrigin + posFromSpindleWithModePitch(&z, localSpindle, false, pitchDu);
+  if (zTarget < zMin) zTarget = zMin;
+  if (zTarget > zMax) zTarget = zMax;
+
+  // Native Cone relationship: X follows the ACTUAL current Z tool position,
+  // not the requested/future Z target.
+  const long xTarget = xOrigin +
+      (long)llround((double)(z.pos - zOrigin) * zToXRatio);
+
+  // Keep the exact native ordering: command Z first, then X.
+  stepToContinuous(&z, zTarget);
+  stepToContinuous(&x, xTarget);
+}
+
+// Execute the optional TURN/FACE chamfer after all normal/spring passes.
+// Each chamfer pass uses the same nominal depth increment as the preceding
+// operation. The main axis is spindle-fed and the depth axis is interpolated
+// from main-axis progress so both axes describe one straight line.
+void modeChamfer(Axis* main, Axis* aux) {
+  if (!chamferActive || chamferDistanceDu <= 0 || (mode != MODE_TURN && mode != MODE_FACE)) return;
+
+  // Chamfer geometry is always referenced to the physical X/Z corner selected
+  // by the job, regardless of which axis is main/aux in TURN versus FACE:
+  //     corner = Z zero + finished X limit.
+  // The signs are derived from the programmed cut directions, so the same
+  // geometry works for external and internal cuts.
+  const long zZero = -z.originPos;
+  const long xZero = -x.originPos;
+  const long xLimit = dupr >= 0 && mode == MODE_FACE
+      ? x.leftStop
+      : dupr < 0 && mode == MODE_FACE
+          ? x.rightStop
+          : auxForward ? x.leftStop : x.rightStop;
+  const long zLimit = mode == MODE_FACE
+      ? (auxForward ? z.leftStop : z.rightStop)
+      : (opDuprSign > 0 ? z.leftStop : z.rightStop);
+
+  const long xTravel = xLimit - xZero;
+  const long zTravel = zLimit - zZero;
+  if (xTravel == 0 || zTravel == 0) {
+    debugLog(DEBUG_LOG_ERROR, "CHAMFER GEOMETRY ERROR xTravel=%ld zTravel=%ld", xTravel, zTravel);
+    chamferActive = false;
+    setIsOnFromLoop(false);
+    beep();
+    return;
+  }
+
+  // Chamfer passes are PARALLEL full-length cuts, one for each preceding
+  // TURN/FACE depth pass.  Do not progressively lengthen the chamfer from a
+  // fixed X start; that produces many air cuts before the line reaches the
+  // work.  Instead, progress the X start depth exactly as the machining passes
+  // progressed and run the full programmed chamfer length on every pass.
+  Axis* depthAxis = mode == MODE_FACE ? &z : &x;
+  const long normalDepthTravel = mode == MODE_FACE ? zTravel : xTravel;
+  const long totalDepthDu = labs(stepsToDu(depthAxis, normalDepthTravel));
+  if (chamferNominalDepthDu <= 0) {
+    chamferNominalDepthDu =
+        max(1L, (long)llround((double)totalDepthDu / (double)max(1, mode == MODE_FACE ? facePasses : turnPasses)));
+  }
+
+  const float angle = constrain(CHAMFER_ANGLE_DEG, 1.0f, 89.0f);
+  const double tanAngle = tan((double)angle * PI / 180.0);
+
+  // Every pass uses the FULL requested chamfer Z length and the corresponding
+  // X leg.  At 45 degrees the physical X and Z distances are equal.
+  const long zLegDu = chamferDistanceDu;
+  const long xLegDu = (long)llround((double)zLegDu * tanAngle);
+  const long xLegSteps = labs(duToSteps(&x, xLegDu));
+  const long zLegSteps = labs(duToSteps(&z, zLegDu));
+
+  // TURN and FACE now share one independent persistent chamfer pass count.
+  // This changes only how many progressive chamfer passes are requested; the
+  // proven TURN/FACE chamfer geometry and synchronization remain unchanged.
+  if (chamferPasses <= 0) {
+    chamferPasses = max(1, chamferSetupPasses);
+
+    chamferPass = 1;
+    debugLog(DEBUG_LOG_AUTO,
+             "CHAMFER PLAN FROZEN type=PARALLEL distanceDu=%ld nominalDepthDu=%ld passes=%d totalDepthDu=%ld activePasses=%d turnPasses=%d facePasses=%d chamferSetupPasses=%d Xzero=%ld Xlimit=%ld Zzero=%ld Zlimit=%ld",
+             chamferDistanceDu, chamferNominalDepthDu, chamferPasses,
+             totalDepthDu, getActivePassCount(), turnPasses, facePasses,
+             chamferSetupPasses, xZero, xLimit, zZero, zLimit);
+  }
+
+  // The normal X stop remains the finished machining limit.  During chamfer
+  // only, extend that local limit by the X component of the FULL chamfer.
+  const long fullChamferXDu = (long)llround((double)chamferDistanceDu * tanAngle);
+  const long fullChamferXSteps = labs(duToSteps(&x, fullChamferXDu));
+
+  const int xCutSign = xTravel > 0 ? 1 : -1;
+  const int zCutSign = zTravel > 0 ? 1 : -1;
+  const long chamferLeftLimit = xCutSign > 0 ? x.leftStop + fullChamferXSteps : x.leftStop;
+  const long chamferRightLimit = xCutSign < 0 ? x.rightStop - fullChamferXSteps : x.rightStop;
+
+  // FACE chamfer geometry legitimately extends on BOTH sides of the normal
+  // facing Z range:
+  //   * the start can be behind Z0 by the cumulative FACE cut depth;
+  //   * the chamfer endpoint can extend beyond the faced depth by one
+  //     chamfer Z leg.
+  //
+  // leftStop is the high-coordinate bound and rightStop is the low-coordinate
+  // bound, so extend each side according to the physical FACE cut direction.
+  const long faceTotalDepthSteps =
+      mode == MODE_FACE ? labs(zLimit - zZero) : 0;
+  const long chamferZLeftLimit =
+      mode == MODE_FACE
+          ? z.leftStop +
+                (zCutSign > 0 ? zLegSteps : faceTotalDepthSteps)
+          : z.leftStop;
+  const long chamferZRightLimit =
+      mode == MODE_FACE
+          ? z.rightStop -
+                (zCutSign > 0 ? faceTotalDepthSteps : zLegSteps)
+          : z.rightStop;
+
+  // TURN and FACE need different chamfer geometry.
+  //
+  // TURN:
+  //   Depth progression is on X.  Keep the proven TURN chamfer geometry.
+  //
+  // FACE:
+  //   Depth progression is on Z.  X is the traverse axis across the face,
+  //   therefore every chamfer pass must START at the preserved FACE X0,
+  //   not at the centre/end of the facing traverse.
+  const long chamferFinishedX = auxForward ? x.leftStop : x.rightStop;
+  const long chamferCutLimit = chamferFinishedX;
+  const long chamferCutDepthSteps =
+      mode == MODE_FACE ? labs(zLimit - zZero)
+                        : labs(chamferCutLimit - xZero);
+
+  const long cumulativeCutDepthSteps =
+      (long)llround((double)chamferCutDepthSteps *
+                    (double)chamferPass / (double)max(1, chamferPasses));
+
+  // Use the exact machined FACE surface captured BEFORE retract, expressed
+  // in the user's origin-relative coordinate system. Convert that invariant
+  // coordinate back into the CURRENT local z.pos frame here.
+  //
+  // This automatically handles:
+  //   - the normal FACE retract distance,
+  //   - originPos changes made by spring-pass / automatic positioning,
+  //   - different facing depths and directions.
+  // Use the exact finished FACE surface captured before retract, converted
+  // back into the current local coordinate frame. Progressive chamfer geometry
+  // is calculated from this physical surface reference; do not shift the
+  // datum by a chamfer-pass increment.
+  // Use the exact finished FACE surface captured before retract, converted
+  // back into the current local coordinate frame. Progressive chamfer geometry
+  // is calculated from this physical surface reference.
+  const long faceChamferZBase =
+      mode == MODE_FACE
+          ? (faceFinalCutCaptured
+                 ? faceFinalCutZCoord - z.originPos
+                 : zLimit)
+          : zZero;
+
+  long chamferXStart;
+  long chamferXEnd;
+  long chamferZStart;
+  long chamferZEnd;
+
+  if (mode == MODE_FACE) {
+    // FACE chamfer spans across the original sharp corner.
+    //
+    // Point A: on the finished face
+    //   X = X0 + current chamfer X leg
+    //   Z = finished FACE Z
+    //
+    // Point B: on the OD / cylindrical surface
+    //   X = X0
+    //   Z = finished FACE Z - current chamfer Z leg
+    //
+    // The synchronized cut therefore removes the corner instead of starting
+    // at the corner and moving away from it.
+    const long passXLegSteps =
+        (long)llround((double)xLegSteps *
+                      (double)chamferPass / (double)max(1, chamferPasses));
+    const long passZLegSteps =
+        (long)llround((double)zLegSteps *
+                      (double)chamferPass / (double)max(1, chamferPasses));
+
+    chamferXStart = xZero + xCutSign * passXLegSteps;
+    chamferXEnd = xZero;
+    chamferZStart = faceChamferZBase;
+
+    // The FACE cut advances Z in zCutSign direction. The cylindrical surface
+    // behind the newly faced end therefore lies on that same side of the
+    // finished face. Span the chamfer from the faced surface to that OD point.
+    chamferZEnd = faceChamferZBase + zCutSign * passZLegSteps;
+  } else {
+    // TURN chamfer: distribute only the portion of the chamfer that can
+    // actually remove material.
+    //
+    // The preceding TURN operation has already removed the radial distance
+    // between xZero and xLimit.  Any chamfer leg shorter than that TURN depth
+    // lies entirely inside already-removed material and becomes an air pass.
+    //
+    // Start the progressive sequence at the TURN depth, then divide the
+    // remaining chamfer leg evenly across the requested chamfer passes.
+    // The final pass remains exactly the requested chamfer size.
+    const int passCount = max(1, chamferPasses);
+    const long turnDepthSteps = min(xLegSteps, labs(xLimit - xZero));
+    const long remainingLegSteps = max(0L, xLegSteps - turnDepthSteps);
+
+    const long passXLegSteps =
+        turnDepthSteps +
+        (long)llround((double)remainingLegSteps *
+                      (double)chamferPass / (double)passCount);
+
+    const long passZLegSteps =
+        (long)llround((double)zLegSteps *
+                      (double)passXLegSteps / (double)max(1L, xLegSteps));
+
+    chamferXEnd = xLimit;
+    chamferXStart =
+        chamferXEnd + xCutSign * passXLegSteps;
+    chamferZStart = zZero;
+    chamferZEnd =
+        zZero + zCutSign * passZLegSteps;
+  }
+
+  // Retract X opposite the cutting direction while positioning in Z.  This is
+  // deliberately based on X, not generic main/aux, because the chamfer corner
+  // is always defined by X limit and Z zero in both TURN and FACE.
+  const long safeX = chamferXStart - xCutSign * duToSteps(&x, SAFE_DISTANCE_DU);
+
+  if (chamferXStart > chamferLeftLimit || chamferXStart < chamferRightLimit ||
+      chamferXEnd > chamferLeftLimit || chamferXEnd < chamferRightLimit ||
+      chamferZStart > chamferZLeftLimit || chamferZStart < chamferZRightLimit ||
+      chamferZEnd > chamferZLeftLimit || chamferZEnd < chamferZRightLimit ||
+      safeX > chamferLeftLimit || safeX < chamferRightLimit) {
+    debugLog(DEBUG_LOG_ERROR,
+             "CHAMFER LIMIT ERROR pass=%d/%d X=%ld->%ld Z=%ld->%ld safeX=%ld Xlimits=%ld..%ld",
+             chamferPass, chamferPasses, chamferXStart, chamferXEnd,
+             chamferZStart, chamferZEnd, safeX, chamferRightLimit, chamferLeftLimit);
+
+    // A rejected FACE chamfer pass must still leave the tool at the normal
+    // safe retract position before releasing the automatic cycle.
+    if (mode == MODE_FACE) {
+      const long abortRetractZ =
+          zZero - zCutSign * labs(duToSteps(&z, SAFE_DISTANCE_DU));
+      debugLog(DEBUG_LOG_AUTO,
+               "FACE CHAMFER SAFE ABORT RETRACT startZ=%ld targetZ=%ld pass=%d/%d",
+               z.pos, abortRetractZ, chamferPass, chamferPasses);
+      z.speedMax = z.speedManualMove;
+      stepToFinal(&z, abortRetractZ);
+      // Do not block here. The axis task will complete the retract while the
+      // main loop remains responsive, including the Stop button.
+    }
+
+    chamferActive = false;
+    chamferPrompt = false;
+    chamferStartPending = false;
+    nextChamferStartFlag = false;
+    chamferAbortLatch = true;
+    setIsOnFromLoop(false);
+    beep();
+    return;
+  }
+
+  // FACE-only handoff: the preceding FACE cycle normally finishes with Z
+  // at the retract position. Before entering the shared TURN chamfer engine,
+  // physically restore Z to the calculated FACE chamfer start and verify it.
+  if (mode == MODE_FACE && opSubIndex == -1) {
+    z.speedMax = z.speedManualMove;
+
+    if (z.pos == chamferZStart && z.pendingPos == 0) {
+      debugLog(DEBUG_LOG_AUTO,
+               "FACE CHAMFER HANDOFF READY Z=%ld motor=%ld target=%ld fromRetract=1",
+               z.pos, z.motorPos, chamferZStart);
+      opSubIndex = 0;
+    } else if (z.pendingPos == 0) {
+      debugLog(DEBUG_LOG_AUTO,
+               "FACE CHAMFER HANDOFF RESTORE Z start=%ld target=%ld motor=%ld",
+               z.pos, chamferZStart, z.motorPos);
+      stepToFinal(&z, chamferZStart);
+    }
+    return;
+  }
+
+  // FACE and TURN now share the exact same proven chamfer execution engine.
+  // Only the geometry above differs by mode.
+
+  // Use one state per positioning move. This prevents a completed X move from
+  // being re-issued while waiting for Z, which can otherwise create an X-only
+  // oscillation and prevent the chamfer from ever reaching its cut state.
+  if (opSubIndex == 0) {
+    // Stage 0: retract X clear of the work.
+    x.speedMax = x.speedManualMove;
+    if (x.pos == safeX && x.pendingPos == 0) {
+      debugLog(DEBUG_LOG_AUTO, "CHAMFER PASS %d/%d X CLEAR pos=%ld target=%ld",
+               chamferPass, chamferPasses, x.pos, safeX);
+      opSubIndex = 1;
+    } else if (x.pendingPos == 0) {
+      stepToFinal(&x, safeX);
+    }
+    return;
+  }
+
+  if (opSubIndex == 1) {
+    // Stage 1: with X clear, position Z exactly at the current pass chamfer
+    // start. This stage is deliberately re-entered after every pass.
+    if (chamferPositionStageTracked != chamferPass) {
+      chamferPositionStageTracked = chamferPass;
+      chamferPositionStageStartMs = millis();
+    }
+    if (millis() - chamferPositionStageStartMs > 5000UL) {
+      debugLog(DEBUG_LOG_ERROR,
+               "FACE CHAMFER POSITION ABORT pass=%d Z=%ld motor=%ld target=%ld pending=%ld",
+               chamferPass, z.pos, z.motorPos, chamferZStart, z.pendingPos);
+      chamferActive = false;
+      chamferPrompt = false;
+      chamferStartPending = false;
+      nextChamferStartFlag = false;
+      chamferAbortLatch = true;
+      setIsOnFromLoop(false);
+      beep();
+      return;
+    }
+
+    // Stage 1: with X clear, position Z exactly at the chamfer start.
+    // Do NOT combine this travel with backlash preload.  The previous combined
+    // move lost exactly one backlash amount from the tool travel because the
+    // first 128 motor steps were correctly consumed by backlash.
+    z.speedMax = z.speedManualMove;
+    if (z.pos == chamferZStart && z.pendingPos == 0) {
+      debugLog(DEBUG_LOG_AUTO,
+               "CHAMFER PASS %d/%d Z POSITIONED pos=%ld motor=%ld target=%ld",
+               chamferPass, chamferPasses, z.pos, z.motorPos, chamferZStart);
+      chamferPositionStageTracked = -999;
+      opSubIndex = 2;
+    } else if (z.pendingPos == 0) {
+      stepToFinal(&z, chamferZStart);
+    }
+    return;
+  }
+
+  if (opSubIndex == 2) {
+    // Stage 2: now that the TOOL is exactly at the chamfer start, take up only
+    // the Z backlash in the upcoming cutting direction.  This changes motorPos
+    // by the backlash amount while keeping z.pos fixed at chamferZStart.
+    z.speedMax = z.speedManualMove;
+    const int zChamferCutSign = chamferZEnd > chamferZStart ? 1 : -1;
+    const long zStartMotor = motorPosForToolPos(&z, chamferZStart, zChamferCutSign);
+    if (z.pos == chamferZStart && z.motorPos == zStartMotor && z.pendingPos == 0) {
+      debugLog(DEBUG_LOG_AUTO,
+               "CHAMFER PASS %d/%d Z READY PRELOADED pos=%ld motor=%ld target=%ld targetMotor=%ld cutSign=%d",
+               chamferPass, chamferPasses, z.pos, z.motorPos, chamferZStart, zStartMotor, zChamferCutSign);
+      opSubIndex = 3;
+    } else if (z.pendingPos == 0) {
+      stepToToolPosFromDirection(&z, chamferZStart, zChamferCutSign, false);
+    }
+    return;
+  }
+
+  if (opSubIndex == 3) {
+    // Stage 3: approach the face-side chamfer X start at Z0.  Do not plunge
+    // directly to the finished cylindrical X surface before Z begins moving.
+    x.speedMax = x.speedManualMove;
+
+    if (mode == MODE_FACE &&
+        x.pos == chamferXStart &&
+        x.pendingPos == 0) {
+      const int xChamferCutSign =
+          chamferXEnd > chamferXStart ? 1 : -1;
+      const long xStartMotor =
+          motorPosForToolPos(&x, chamferXStart, xChamferCutSign);
+
+      // Later FACE passes were entering the synchronized cut with X motorPos
+      // still offset by backlash. Take up X backlash now while tool position
+      // remains exactly at X0.
+      if (x.motorPos != xStartMotor) {
+        stepToToolPosFromDirection(
+            &x, chamferXStart, xChamferCutSign, false);
+        return;
+      }
+    }
+
+    if (x.pos == chamferXStart && x.pendingPos == 0) {
+      debugLog(DEBUG_LOG_AUTO,
+               "CHAMFER PASS %d/%d READY build=20261104BB type=X0_MINUS_XLEG_MINUS_PASS Xzero=%ld XcutLimit=%ld XlegSteps=%ld cumulativeCutSteps=%ld Xstart=%ld Xend=%ld Xdelta=%ld Zzero=%ld Zstart=%ld Zend=%ld Zdelta=%ld Zdu=%ld Xdu=%ld angle=%.2f",
+               chamferPass, chamferPasses, xZero, chamferCutLimit,
+               xLegSteps, cumulativeCutDepthSteps,
+               chamferXStart, chamferXEnd, chamferXEnd - chamferXStart,
+               zZero, chamferZStart, chamferZEnd,
+               chamferZEnd - chamferZStart, zLegDu, xLegDu, angle);
+      debugLog(DEBUG_LOG_AUTO,
+               "CHAMFER X BACKLASH SUMMARY pass=%d Xtool=%ld Xmotor=%ld offset=%ld offsetMm=%.6f configuredBacklash=%ld configuredBacklashMm=%.6f",
+               chamferPass, x.pos, x.motorPos, x.motorPos - x.pos,
+               diagnosticStepsToMm(&x, x.motorPos - x.pos),
+               x.backlashSteps, diagnosticStepsToMm(&x, x.backlashSteps));
+      opSubIndex = 4;
+    } else if (x.pendingPos == 0) {
+      stepToFinal(&x, chamferXStart);
+    }
+    return;
+  }
+
+  if (opSubIndex == 4) {
+    // Enter a temporary native-Cone coordinate frame.  Native modeCone() uses
+    // machine zero for both axes and spindle zero as the feed origin.  Shift the
+    // logical X/Z coordinates and spindle reference so the chamfer start becomes
+    // exactly that same (0,0,0) frame.  Motor positions are shifted by the same
+    // amount, so no physical motion occurs here.
+    chamferSavedZOrigin = z.originPos;
+    chamferSavedXOrigin = x.originPos;
+    chamferSavedSpindleOrigin = spindlePosAvg;
+    chamferSavedZPos = z.pos;
+    chamferSavedXPos = x.pos;
+    chamferSavedZMotor = z.motorPos;
+    chamferSavedXMotor = x.motorPos;
+
+    // Shift only the live tool/motor coordinates.  Leave originPos unchanged
+    // so setup geometry and the frozen chamfer plan cannot be altered while
+    // the native-Cone cut is running.
+    z.pos -= chamferZStart;
+    z.motorPos -= chamferZStart;
+    x.pos -= chamferXStart;
+    x.motorPos -= chamferXStart;
+
+    // Use a finer feed for chamfering than the normal turning/facing pitch.
+    // This affects only the synchronized chamfer feed rate; geometry and
+    // X/Z ratio remain unchanged.
+    long feedMagnitude = labs(dupr) / 2;
+    if (feedMagnitude == 0) feedMagnitude = 1;
+
+    // TURN: Z is the proven master axis.
+    // FACE: mirror the same relationship with X as master and Z as follower.
+    if (mode == MODE_FACE) {
+      chamferConePitch =
+          (chamferXEnd >= chamferXStart) ? feedMagnitude : -feedMagnitude;
+    } else {
+      chamferConePitch =
+          (chamferZEnd >= chamferZStart) ? feedMagnitude : -feedMagnitude;
+    }
+    chamferSpindleStart = spindlePosAvg;
+
+    x.speedMax = LONG_MAX;
+    z.speedMax = LONG_MAX;
+    debugLog(DEBUG_LOG_AUTO,
+             "CHAMFER PASS %d/%d NATIVE FRAME ENTER X0=%ld Z0=%ld Xend=%ld Zend=%ld spindle0=%ld pitch=%ld",
+             chamferPass, chamferPasses, chamferXStart, chamferZStart,
+             chamferXEnd - chamferXStart, chamferZEnd - chamferZStart,
+             chamferSpindleStart, chamferConePitch);
+    opSubIndex = 5;
+    return;
+  }
+
+  if (opSubIndex == 5) {
+    const long zLocalEnd = chamferZEnd - chamferZStart;
+    const long xLocalEnd = chamferXEnd - chamferXStart;
+
+    if (zLocalEnd == 0 || xLocalEnd == 0) {
+      debugLog(DEBUG_LOG_ERROR,
+               "CHAMFER CONE ERROR zero span X=%ld Z=%ld",
+               xLocalEnd, zLocalEnd);
+      chamferActive = false;
+      setIsOnFromLoop(false);
+      beep();
+      return;
+    }
+
+    const long localSpindle = spindlePosAvg - chamferSpindleStart;
+
+    if (mode == MODE_FACE) {
+      // FACE mirrors the proven TURN relationship:
+      // spindle -> X master; ACTUAL X -> Z follower.
+      const double xToZRatio =
+          (double)zLocalEnd / (double)xLocalEnd;
+
+      long xTarget =
+          posFromSpindleWithModePitch(
+              &x, localSpindle, false, chamferConePitch);
+
+      if (xLocalEnd > 0)
+        xTarget = constrain(xTarget, 0L, xLocalEnd);
+      else
+        xTarget = constrain(xTarget, xLocalEnd, 0L);
+
+      const long zTarget =
+          (long)llround((double)x.pos * xToZRatio);
+
+      // Same ordering as TURN, but with FACE roles swapped:
+      // command master first, follower second.
+      stepToContinuous(&x, xTarget);
+      stepToContinuous(&z, zTarget);
+
+      // FACE synchronization diagnostic.  Do not change the motion here;
+      // record the live master/follower relationship so the physical lag can
+      // be identified from the log rather than inferred from endpoints.
+      static unsigned long faceChamferSyncDiagMs = 0;
+      const unsigned long faceChamferSyncNow = millis();
+      if (faceChamferSyncDiagMs == 0 ||
+          faceChamferSyncNow - faceChamferSyncDiagMs >= 50) {
+        const long expectedZFromX =
+            (long)llround((double)x.pos * xToZRatio);
+        const long expectedXFromZ =
+            xToZRatio != 0.0
+                ? (long)llround((double)z.pos / xToZRatio)
+                : 0;
+
+        debugLog(DEBUG_LOG_MOTION,
+                 "FACE CHAMFER SYNC LIVE pass=%d X=%ld Z=%ld xTarget=%ld zTarget=%ld expectedZ=%ld zError=%ld expectedX=%ld xError=%ld Xpending=%ld Zpending=%ld spindle=%ld ratio=%.6f",
+                 chamferPass,
+                 x.pos, z.pos,
+                 xTarget, zTarget,
+                 expectedZFromX, z.pos - expectedZFromX,
+                 expectedXFromZ, x.pos - expectedXFromZ,
+                 x.pendingPos, z.pendingPos,
+                 localSpindle, xToZRatio);
+
+        faceChamferSyncDiagMs = faceChamferSyncNow;
+      }
+
+      if (x.pos == xLocalEnd && x.pendingPos == 0) {
+        // Allow the follower one final native update at the master endpoint.
+        stepToContinuous(&z, zLocalEnd);
+
+        if (z.pos == zLocalEnd && z.pendingPos == 0) {
+          z.pos += chamferZStart;
+          z.motorPos += chamferZStart;
+          x.pos += chamferXStart;
+          x.motorPos += chamferXStart;
+
+          debugLog(DEBUG_LOG_AUTO,
+                   "FACE CHAMFER NATIVE FRAME EXIT X=%ld Z=%ld spindle=%ld ratio=%.6f",
+                   x.pos, z.pos, spindlePosAvg, xToZRatio);
+          opSubIndex = 6;
+        }
+      }
+    } else {
+      // Proven TURN implementation - unchanged:
+      // spindle -> Z master; ACTUAL Z -> X follower.
+      const double zToXRatio =
+          (double)xLocalEnd / (double)zLocalEnd;
+
+      long zTarget =
+          posFromSpindleWithModePitch(
+              &z, localSpindle, false, chamferConePitch);
+
+      if (zLocalEnd > 0)
+        zTarget = constrain(zTarget, 0L, zLocalEnd);
+      else
+        zTarget = constrain(zTarget, zLocalEnd, 0L);
+
+      const long xTarget =
+          (long)llround((double)z.pos * zToXRatio);
+
+      stepToContinuous(&z, zTarget);
+      stepToContinuous(&x, xTarget);
+
+      if (z.pos == zLocalEnd && z.pendingPos == 0) {
+        stepToContinuous(&x, xLocalEnd);
+
+        if (x.pos == xLocalEnd && x.pendingPos == 0) {
+          z.pos += chamferZStart;
+          z.motorPos += chamferZStart;
+          x.pos += chamferXStart;
+          x.motorPos += chamferXStart;
+
+          debugLog(DEBUG_LOG_AUTO,
+                   "CHAMFER PASS %d/%d NATIVE FRAME EXIT X=%ld Z=%ld spindle=%ld",
+                   chamferPass, chamferPasses,
+                   x.pos, z.pos, spindlePosAvg);
+          opSubIndex = 6;
+        }
+      }
+    }
+    return;
+  }
+
+  if (opSubIndex == 6) {
+    if (chamferPass < chamferPasses) {
+      // Coordinated inter-pass return.
+      //
+      // Move directly from the completed chamfer endpoint to the NEXT pass
+      // start while Z returns to Z0.  Z is the master axis and X follows the
+      // actual Z position linearly, so X must not advance to the next pass
+      // start before Z has begun returning.
+      const int nextPass = chamferPass + 1;
+      const long nextCumulativeCutDepthSteps =
+          (long)llround((double)chamferCutDepthSteps *
+                        (double)nextPass / (double)max(1, chamferPasses));
+
+      const long nextChamferXStart =
+          mode == MODE_FACE
+              ? xZero + xCutSign *
+                    (long)llround((double)xLegSteps *
+                                  (double)nextPass /
+                                  (double)max(1, chamferPasses))
+              : xZero + xCutSign * (xLegSteps + nextCumulativeCutDepthSteps);
+
+      // FACE progressive chamfer keeps the finished FACE Z datum as the
+      // start of every pass. TURN remains exactly at Z0 as before.
+      const long nextChamferZStart =
+          mode == MODE_FACE ? faceChamferZBase : zZero;
+
+      const long returnXStart = chamferXEnd;
+      const long returnZStart = chamferZEnd;
+      const long returnXSpan = nextChamferXStart - returnXStart;
+      const long returnZSpan = nextChamferZStart - returnZStart;
+
+      x.speedMax = x.speedManualMove;
+      z.speedMax = z.speedManualMove;
+
+      if (returnZSpan == 0) {
+        // Degenerate case: Z is already at the next start. Finish X directly.
+        if (x.pos == nextChamferXStart && x.pendingPos == 0) {
+          debugLog(DEBUG_LOG_AUTO,
+                   "CHAMFER PASS %d->%d COORD RETURN COMPLETE X=%ld Z=%ld",
+                   chamferPass, nextPass, x.pos, z.pos);
+          chamferPass = nextPass;
+          // Re-enter the normal positioning stage for the NEW pass.  Do not
+          // jump directly to backlash preload: the next pass geometry may have
+          // a different tool start, and preload moves motorPos without moving
+          // the tool through backlash.
+          opSubIndex = 1;
+          lcdHashLine3 = 0;
+        } else if (x.pendingPos == 0) {
+          stepToFinal(&x, nextChamferXStart);
+        }
+        return;
+      }
+
+      // Drive Z continuously toward Z0.
+      stepToContinuous(&z, nextChamferZStart);
+
+      // X follows the ACTUAL Z return position, preserving a straight
+      // coordinated path between the two pass endpoints.
+      double returnFraction =
+          (double)(z.pos - returnZStart) / (double)returnZSpan;
+      if (returnFraction < 0.0) returnFraction = 0.0;
+      if (returnFraction > 1.0) returnFraction = 1.0;
+      const long coordinatedXTarget =
+          returnXStart + (long)llround((double)returnXSpan * returnFraction);
+      stepToContinuous(&x, coordinatedXTarget);
+
+      if (z.pos == nextChamferZStart && z.pendingPos == 0) {
+        stepToContinuous(&x, nextChamferXStart);
+        if (x.pos == nextChamferXStart && x.pendingPos == 0) {
+          debugLog(DEBUG_LOG_AUTO,
+                   "CHAMFER PASS %d->%d COORD RETURN COMPLETE X=%ld Z=%ld nextX=%ld nextZ=%ld",
+                   chamferPass, nextPass, x.pos, z.pos,
+                   nextChamferXStart, nextChamferZStart);
+          chamferPass = nextPass;
+          // Always verify the next pass TOOL start before backlash preload.
+          opSubIndex = 1;
+          lcdHashLine3 = 0;
+        }
+      }
+      return;
+    }
+
+    // Final pass: coordinate X retract with Z return to Z0.
+    // This prevents X from moving into the work while Z is still at the
+    // completed chamfer endpoint.
+    const long finalReturnXStart = chamferXEnd;
+    const long finalReturnZStart = chamferZEnd;
+    const long finalReturnXSpan = safeX - finalReturnXStart;
+    const long finalReturnZSpan = zZero - finalReturnZStart;
+
+    x.speedMax = x.speedManualMove;
+    z.speedMax = z.speedManualMove;
+
+    if (finalReturnZSpan == 0) {
+      if (x.pos == safeX && x.pendingPos == 0) {
+        opSubIndex = 7;
+      } else {
+        stepToContinuous(&x, safeX);
+      }
+      return;
+    }
+
+    stepToContinuous(&z, zZero);
+
+    double finalReturnFraction =
+        (double)(z.pos - finalReturnZStart) / (double)finalReturnZSpan;
+    if (finalReturnFraction < 0.0) finalReturnFraction = 0.0;
+    if (finalReturnFraction > 1.0) finalReturnFraction = 1.0;
+
+    const long coordinatedFinalXTarget =
+        finalReturnXStart +
+        (long)llround((double)finalReturnXSpan * finalReturnFraction);
+    stepToContinuous(&x, coordinatedFinalXTarget);
+
+    if (z.pos == zZero && z.pendingPos == 0) {
+      stepToContinuous(&x, safeX);
+      if (x.pos == safeX && x.pendingPos == 0) {
+        debugLog(DEBUG_LOG_AUTO,
+                 "CHAMFER FINAL COORD RETURN COMPLETE X=%ld Z=%ld safeX=%ld",
+                 x.pos, z.pos, safeX);
+        opSubIndex = 7;
+      }
+    }
+    return;
+  }
+
+  if (opSubIndex == 7) {
+    // TURN completion remains unchanged. FACE adds only its normal final
+    // retract measured from the preserved Z0.
+    if (mode == MODE_FACE) {
+      const long retractSteps =
+          labs(duToSteps(&z, SAFE_DISTANCE_DU));
+      const long finalRetractZ =
+          zZero - zCutSign * retractSteps;
+
+      if (z.pos != finalRetractZ || z.pendingPos != 0) {
+        if (z.pendingPos == 0) {
+          z.speedMax = z.speedManualMove;
+          stepToFinal(&z, finalRetractZ);
+        }
+        return;
+      }
+
+      debugLog(DEBUG_LOG_AUTO,
+               "FACE CHAMFER TURN ENGINE COMPLETE build=20261104BB passes=%d X=%ld Z=%ld Xzero=%ld Zzero=%ld retractZ=%ld",
+               chamferPasses, x.pos, z.pos, xZero, zZero, finalRetractZ);
+    }
+
+    debugLog(DEBUG_LOG_AUTO, "CHAMFER COMPLETE passes=%d distanceDu=%ld angle=%.2f",
+             chamferPasses, chamferDistanceDu, CHAMFER_ANGLE_DEG);
+    chamferActive = false;
+    chamferPass = chamferPasses = 0;
+    chamferNominalDepthDu = 0;
+    setIsOnFromLoop(false);
+    lcdHashLine3 = 0;
+    beep();
+  }
+
+}
+
 // Execute one automatic turning/facing-style pass sequence. The main axis
 // performs the spindle-synchronised cut and the auxiliary axis sets depth and
 // retracts fully, including backlash compensation, after every cutting pass.
+// Turn pulse diagnostics: actual STEP edges emitted during each spindle-synchronised pass
+// and across the zero-return/backlash-preload boundary before the next pass.
+uint32_t turnPassStepPulseStart = 0;
+uint32_t turnFirstPreloadPulseStart = 0;
+uint32_t turnFirstPreloadPulseEnd = 0;
+long turnFirstPreloadStartMotor = 0;
+long turnFirstPreloadEndMotor = 0;
+bool turnFirstPreloadCaptured = false;
+uint32_t turnZeroReturnPulseCount = 0;
+uint32_t turnPreloadStartPulseCount = 0;
+uint32_t turnPreloadEndPulseCount = 0;
+long turnZeroReturnToolPos = 0;
+long turnZeroReturnMotorPos = 0;
+
 void modeTurn(Axis* main, Axis* aux) {
-  if (main->movingManually || aux->movingManually || turnPasses <= 0 ||
+  if (chamferActive) {
+    modeChamfer(main, aux);
+    return;
+  }
+
+  // TURN and FACE share this proven motion engine, but keep independent
+  // operator pass-count settings.
+  const int passCount = mode == MODE_FACE ? facePasses : turnPasses;
+  if (main->movingManually || aux->movingManually || passCount <= 0 ||
       main->leftStop == LONG_MAX || main->rightStop == LONG_MIN ||
       aux->leftStop == LONG_MAX || aux->rightStop == LONG_MIN ||
       dupr == 0 || (dupr * opDuprSign < 0) || starts < 1) {
@@ -10074,7 +11307,7 @@ void modeTurn(Axis* main, Axis* aux) {
   long auxEndStop = auxForward ? aux->leftStop : aux->rightStop;
 
   // All pass-based modes calculate their passes from the displayed axis zero.
-  // The positioning phase moves both axes to zero and is not included in turnPasses.
+  // The positioning phase moves both axes to zero and is not included in the programmed pass count.
   mainStartStop = -main->originPos;
   auxStartStop = -aux->originPos;
   // opIndex 0 is only executed once, do setup calculations here.
@@ -10082,53 +11315,143 @@ void modeTurn(Axis* main, Axis* aux) {
   if (opIndex == 0) {
     startOffset = starts == 1 ? 0 : round(ENCODER_STEPS_FLOAT / starts);
 
-    // Move to right-bottom limit.
+    if (opSubIndex == 0 && !turnFirstPreloadCaptured) {
+      turnFirstPreloadPulseStart = 0;
+      turnFirstPreloadPulseEnd = 0;
+      turnFirstPreloadStartMotor = main->motorPos;
+      turnFirstPreloadEndMotor = main->motorPos;
+    }
+
+    // First-pass positioning uses the proven unconditional backlash sequence.
+    // Always establish the main-axis zero from the retract side and then take up
+    // the full configured backlash in the cutting direction before spindle sync.
     main->speedMax = main->speedManualMove;
     aux->speedMax = aux->speedManualMove;
-    long auxPos = auxStartStop;
-    // Overstep by 1 so that "main" backlash is taken out before "opSubIndex == 1".
-    long mainPos = mainStartStop + (opDuprSign > 0 ? -1 : 1);
-    stepToFinal(main, mainPos);
-    stepToFinal(aux, auxPos);
-    if (main->pos == mainPos && main->pendingPos == 0 && aux->pos == auxPos && aux->pendingPos == 0) {
-      stepToFinal(main, mainStartStop);
+    const int mainCutSign = mainEndStop > mainStartStop ? 1 : -1;
+    const int mainRetractSign = -mainCutSign;
+    const long mainRetractMotor = motorPosForToolPos(main, mainStartStop, mainRetractSign);
+    const long mainCutMotor = motorPosForToolPos(main, mainStartStop, mainCutSign);
+
+    if (opSubIndex == 0) {
+      if (main->motorPos == mainRetractMotor && main->pendingPos == 0 &&
+          aux->pos == auxStartStop && aux->pendingPos == 0) {
+        opSubIndex = 1;
+      } else {
+        if (main->pendingPos == 0 && main->motorPos != mainRetractMotor) {
+          stepToToolPosFromDirection(main, mainStartStop, mainRetractSign, false);
+        }
+        if (aux->pendingPos == 0 && aux->pos != auxStartStop) {
+          stepToFinal(aux, auxStartStop);
+        }
+      }
+      return;
+    }
+
+    if (opSubIndex == 1) {
+      if (turnFirstPreloadPulseStart == 0) {
+        turnFirstPreloadPulseStart = main->stepPulseCount;
+        turnFirstPreloadStartMotor = main->motorPos;
+      }
+      if (main->motorPos == mainCutMotor && main->pendingPos == 0) {
+        turnFirstPreloadPulseEnd = main->stepPulseCount;
+        turnFirstPreloadEndMotor = main->motorPos;
+        turnFirstPreloadCaptured = true;
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN FIRST PRELOAD READY targetTool=%ld targetMotor=%ld pos=%ld motor=%ld backlash=%ld",
+                 mainStartStop, mainCutMotor, main->pos, main->motorPos, main->backlashSteps);
+        opSubIndex = 2;
+      } else if (main->pendingPos == 0) {
+        stepToToolPosFromDirection(main, mainStartStop, mainCutSign, false);
+      }
+      return;
+    }
+
+    if (opSubIndex == 2) {
       autoOperationLogStartMs = millis();
+      const long mainTravelDuLog = labs(stepsToDu(main, mainEndStop - mainStartStop));
       debugLog(DEBUG_LOG_AUTO,
-               "TURN START passes=%d starts=%d main=%c aux=%c mainStart=%ld mainEnd=%ld auxStart=%ld auxEnd=%ld mainBacklash=%ld auxBacklash=%ld safe=%ld dupr=%ld",
-               turnPasses, starts, main->name, aux->name, mainStartStop, mainEndStop,
+               "TURN START passes=%d starts=%d main=%c aux=%c mainStart=%ld mainEnd=%ld mainTravelDu=%ld mainTravelMm=%.4f auxStart=%ld auxEnd=%ld mainBacklash=%ld auxBacklash=%ld safe=%ld dupr=%ld",
+               passCount, starts, main->name, aux->name, mainStartStop, mainEndStop,
+               mainTravelDuLog, mainTravelDuLog / 10000.0,
                auxStartStop, auxEndStop, main->backlashSteps, aux->backlashSteps,
                auxSafeDistance, dupr);
       opIndex = 1;
       opSubIndex = 0;
+      return;
     }
-  } else if (opIndex <= turnPasses * starts) {
-    if (opIndexAdvanceFlag && (opIndex + starts) < turnPasses * starts) {
+  } else if (opIndex <= passCount * starts) {
+    if (opIndexAdvanceFlag && (opIndex + starts) < passCount * starts) {
       opIndexAdvanceFlag = false;
       opIndex += starts;
     }
     long passNumber = (opIndex + starts - 1) / starts;
     long auxPos = mode == MODE_THREAD
-        ? calcThreadPassTarget(auxStartStop, auxEndStop, passNumber, turnPasses)
-        : calcLinearPassTarget(auxStartStop, auxEndStop, passNumber, turnPasses);
-    // Bringing X to starting position.
+        ? calcThreadPassTarget(auxStartStop, auxEndStop, passNumber, passCount)
+        : calcLinearPassTarget(auxStartStop, auxEndStop, passNumber, passCount);
+    // Bringing the cut-depth axis to its starting position.  This is the
+    // known-good pre-chamfer behaviour: the feed axis position established by
+    // the preceding return/backlash sequence is left untouched here.
     if (opSubIndex == 0) {
       stepToFinal(aux, auxPos);
       if (aux->pos == auxPos && aux->pendingPos == 0) {
+        const long auxZero = -aux->originPos;
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld READY mainZero=%ld mainPos=%ld mainMotor=%ld auxTarget=%ld auxPos=%ld",
+                 (long)passNumber, mainStartStop, main->pos, main->motorPos,
+                 auxPos, aux->pos);
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN X DEPTH SUMMARY pass=%ld axis=%c zero=%ld target=%ld cutFromZeroSteps=%ld cutFromZeroMm=%.6f motor=%ld motorOffset=%ld motorOffsetMm=%.6f configuredBacklash=%ld configuredBacklashMm=%.6f",
+                 (long)passNumber, aux->name, auxZero, auxPos,
+                 auxPos - auxZero, diagnosticStepsToMm(aux, auxPos - auxZero),
+                 aux->motorPos, aux->motorPos - aux->pos,
+                 diagnosticStepsToMm(aux, aux->motorPos - aux->pos),
+                 aux->backlashSteps, diagnosticStepsToMm(aux, aux->backlashSteps));
         opSubIndex = 1;
         spindlePosSync = spindleModulo(spindlePosGlobal - spindleFromPos(main, main->posGlobal) + startOffset * (opIndex - 1));
-        return; // Instead of jumping to the next step, let spindlePosSync get to 0 first.
+        return; // Let spindlePosSync reach zero before starting the cutting traverse.
       }
     }
     // spindlePosSync counted down to 0, start thread from here.
     if (opSubIndex == 1) {
-      markOrigin();
+      // Rebase only the spindle-fed MAIN axis for the next synchronized pass.
+      // Do NOT call markOrigin() here: that also rebases the auxiliary/depth
+      // axis (X in TURN), which shifts the user-set X zero and causes later
+      // pass depths to be calculated from a moving reference.
+      const long auxOriginBeforePass = aux->originPos;
+      const long auxZeroBeforePass = -aux->originPos;
+      markAxisOrigin(main);
+      zeroSpindlePos();
+      debugLog(DEBUG_LOG_AUTO,
+               "TURN PASS %ld FIXED DEPTH ZERO axis=%c origin=%ld zero=%ld auxPos=%ld auxMotor=%ld",
+               (long)passNumber, aux->name, auxOriginBeforePass,
+               auxZeroBeforePass, aux->pos, aux->motorPos);
       main->speedMax = LONG_MAX;
+      const uint32_t preStartPulseCount = main->stepPulseCount;
       debugLog(DEBUG_LOG_AUTO,
                "TURN PASS %ld START mainStart=%ld mainEnd=%ld mainPos=%ld mainMotor=%ld auxTarget=%ld auxPos=%ld auxMotor=%ld spindle=%ld sync=%ld",
                (long)passNumber, mainStartStop, mainEndStop, main->pos, main->motorPos,
                auxPos, aux->pos, aux->motorPos, spindlePosAvg, spindlePosSync);
+      if (passNumber > 1) {
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld ZERO BOUNDARY returnPulse=%lu preloadStartPulse=%lu preloadEndPulse=%lu passStartPulse=%lu returnToPreload=%ld preloadPulses=%ld preloadToPass=%ld returnTool=%ld returnMotor=%ld startTool=%ld startMotor=%ld",
+                 (long)passNumber,
+                 (unsigned long)turnZeroReturnPulseCount,
+                 (unsigned long)turnPreloadStartPulseCount,
+                 (unsigned long)turnPreloadEndPulseCount,
+                 (unsigned long)preStartPulseCount,
+                 (long)(turnPreloadStartPulseCount - turnZeroReturnPulseCount),
+                 (long)(turnPreloadEndPulseCount - turnPreloadStartPulseCount),
+                 (long)(preStartPulseCount - turnPreloadEndPulseCount),
+                 turnZeroReturnToolPos, turnZeroReturnMotorPos, main->pos, main->motorPos);
+      }
+      turnPassStepPulseStart = preStartPulseCount;
+      debugLog(DEBUG_LOG_AUTO,
+               "TURN PASS %ld PULSE START axis=%c pulseCounter=%lu expectedTravelSteps=%ld",
+               (long)passNumber, main->name, (unsigned long)turnPassStepPulseStart,
+               labs(mainEndStop - mainStartStop));
       opSubIndex = 2;
-      // markOrigin() changed Start/EndStop values, re-calculate them.
+      // markAxisOrigin(main) changed only the spindle-fed axis coordinates;
+      // the X/depth-axis zero remains the original operator-set reference.
       return;
     }
     // Doing the pass cut.
@@ -10155,6 +11478,27 @@ void modeTurn(Axis* main, Axis* aux) {
                  (long)passNumber, mainStartStop, mainEndStop, mainTargetPos,
                  main->pos, main->motorPos, main->pendingPos, main->backlashSteps,
                  spindlePosAvg, spindlePosGlobal, main->continuous ? 1 : 0);
+        const uint32_t turnPassPulses = main->stepPulseCount - turnPassStepPulseStart;
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld PULSE RESULT axis=%c emitted=%lu expected=%ld difference=%ld emittedMm=%.6f expectedMm=%.6f",
+                 (long)passNumber, main->name, (unsigned long)turnPassPulses,
+                 labs(mainEndStop - mainStartStop),
+                 (long)turnPassPulses - labs(mainEndStop - mainStartStop),
+                 diagnosticStepsToMm(main, (long)turnPassPulses),
+                 diagnosticStepsToMm(main, labs(mainEndStop - mainStartStop)));
+        refreshCutFieldDisplaysAfterPass();
+
+        if (mode == MODE_FACE) {
+          faceFinalCutCaptured = true;
+          faceFinalCutZPos = z.pos;
+          faceFinalCutZMotor = z.motorPos;
+          faceFinalCutZCoord = z.pos + z.originPos;
+          debugLog(DEBUG_LOG_AUTO,
+                   "FACE FINAL CUT CAPTURE pass=%ld Ztool=%ld Zmotor=%ld Zorigin=%ld Zcoord=%ld",
+                   (long)passNumber, faceFinalCutZPos, faceFinalCutZMotor,
+                   z.originPos, faceFinalCutZCoord);
+        }
+
         opSubIndex = 3;
       }
     }
@@ -10169,20 +11513,26 @@ void modeTurn(Axis* main, Axis* aux) {
         opSubIndex = 4;
       }
     }
-    // Returning to start of main.
+    // Return the feed axis to the zero/start coordinate from the retract side,
+    // then take up its backlash in the CUTTING direction before the next pass.
+    // The tool coordinate remains at mainStartStop throughout the preload; only
+    // motorPos crosses the backlash allowance.  This restores the proven sequence
+    // used before the recent zero-return change and prevents a physically short cut.
     if (opSubIndex == 4) {
       main->speedMax = main->speedManualMove;
       const int mainCutSign = mainEndStop > mainStartStop ? 1 : -1;
       const int mainRetractSign = -mainCutSign;
       const long mainStartMotor = motorPosForToolPos(main, mainStartStop, mainRetractSign);
       if (main->motorPos == mainStartMotor && main->pendingPos == 0) {
+        turnZeroReturnPulseCount = main->stepPulseCount;
+        turnZeroReturnToolPos = main->pos;
+        turnZeroReturnMotorPos = main->motorPos;
         debugLog(DEBUG_LOG_AUTO,
-                 "TURN PASS %ld MAIN RETURN targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pending=%ld",
-                 (long)passNumber, mainStartStop, mainStartMotor, main->pos, main->motorPos, main->pendingPos);
-        // Before another pass, take up Z backlash in the cutting direction while
-        // the X tool is still retracted.  Do not let the next spindle-synchronised
-        // cut start from pos=0 with motorPos=-backlashSteps.
-        if (opIndex < turnPasses * starts) {
+                 "TURN PASS %ld MAIN RETURN targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pending=%ld pulseCounter=%lu",
+                 (long)passNumber, mainStartStop, mainStartMotor,
+                 main->pos, main->motorPos, main->pendingPos,
+                 (unsigned long)turnZeroReturnPulseCount);
+        if (opIndex < passCount * starts) {
           opSubIndex = 5;
         } else {
           opSubIndex = 0;
@@ -10192,18 +11542,30 @@ void modeTurn(Axis* main, Axis* aux) {
         stepToToolPosFromDirection(main, mainStartStop, mainRetractSign, false);
       }
     }
-    // Take up main-axis backlash at the start coordinate before the next pass.
+
+    // Preload main-axis backlash at Z/X zero in the cutting direction before
+    // allowing the next spindle-synchronised traverse to start.
     if (opSubIndex == 5) {
       main->speedMax = main->speedManualMove;
       const int mainCutSign = mainEndStop > mainStartStop ? 1 : -1;
       const long mainCutStartMotor = motorPosForToolPos(main, mainStartStop, mainCutSign);
       if (main->motorPos == mainCutStartMotor && main->pendingPos == 0) {
+        turnPreloadEndPulseCount = main->stepPulseCount;
         debugLog(DEBUG_LOG_AUTO,
-                 "TURN PASS %ld MAIN PRELOAD targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pending=%ld",
-                 (long)passNumber, mainStartStop, mainCutStartMotor, main->pos, main->motorPos, main->pendingPos);
+                 "TURN PASS %ld MAIN PRELOAD END targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pending=%ld pulseCounter=%lu preloadPulses=%ld",
+                 (long)passNumber, mainStartStop, mainCutStartMotor,
+                 main->pos, main->motorPos, main->pendingPos,
+                 (unsigned long)turnPreloadEndPulseCount,
+                 (long)(turnPreloadEndPulseCount - turnPreloadStartPulseCount));
         opSubIndex = 0;
         opIndex++;
       } else if (main->pendingPos == 0) {
+        turnPreloadStartPulseCount = main->stepPulseCount;
+        debugLog(DEBUG_LOG_AUTO,
+                 "TURN PASS %ld MAIN PRELOAD START targetTool=%ld targetMotor=%ld pos=%ld motor=%ld pulseCounter=%lu",
+                 (long)passNumber, mainStartStop, mainCutStartMotor,
+                 main->pos, main->motorPos,
+                 (unsigned long)turnPreloadStartPulseCount);
         stepToToolPosFromDirection(main, mainStartStop, mainCutSign, false);
       }
     }
@@ -10236,6 +11598,22 @@ void modeTurn(Axis* main, Axis* aux) {
                (mainValid && auxValid) ? "PASS" : "FAIL",
                (unsigned long)(millis() - autoOperationLogStartMs), main->pos, main->motorPos,
                main->pendingPos, aux->pos, aux->motorPos, aux->pendingPos);
+      debugLog(DEBUG_LOG_AUTO,
+               "TURN FIRST PRELOAD SUMMARY captured=%d startMotor=%ld endMotor=%ld pulses=%lu configuredBacklash=%ld",
+               turnFirstPreloadCaptured ? 1 : 0,
+               turnFirstPreloadStartMotor, turnFirstPreloadEndMotor,
+               (unsigned long)(turnFirstPreloadPulseEnd - turnFirstPreloadPulseStart),
+               main->backlashSteps);
+      turnFirstPreloadCaptured = false;
+
+      // Preserve the job's original X/Z zero while pausing for Spring Pass or
+      // Chamfer.  Without this, setIsOnFromLoop(false) calls markOrigin() at
+      // the retracted tool position, making the following chamfer use the
+      // wrong X depth and potentially generating far too many passes.
+      preserveAutoJobOriginOnStop =
+          (mode == MODE_TURN || mode == MODE_FACE) &&
+          (ENABLE_SPRING_PASS || chamferDistanceDu > 0);
+
       setIsOnFromLoop(false);
       springPassActive = false;
       lcdHashLine3 = 0;
@@ -10246,7 +11624,12 @@ void modeTurn(Axis* main, Axis* aux) {
       } else {
         springPassPrompt = false;
         springPassCount = 0;
-        debugLog(DEBUG_LOG_AUTO, "SPRING PASS disabled; cycle finished normally");
+        if ((mode == MODE_TURN || mode == MODE_FACE) && chamferDistanceDu > 0) {
+          chamferPrompt = true;
+          debugLog(DEBUG_LOG_AUTO, "CHAMFER PROMPT distanceDu=%ld angle=%.2f", chamferDistanceDu, CHAMFER_ANGLE_DEG);
+        } else {
+          debugLog(DEBUG_LOG_AUTO, "SPRING PASS disabled; cycle finished normally");
+        }
       }
       beep();
     }
@@ -10254,13 +11637,40 @@ void modeTurn(Axis* main, Axis* aux) {
 }
 
 void modeCone() {
+  // Native Cone diagnostic only. This deliberately does not alter Maxim's
+  // motion calculation; it records the values used by the existing routine.
+  static bool coneDiagActive = false;
+  static unsigned long coneDiagLastLogMs = 0;
+  static uint32_t coneDiagStartZPulses = 0;
+  static uint32_t coneDiagStartXPulses = 0;
+
   if (z.movingManually || x.movingManually || coneRatio == 0) {
+    if (coneDiagActive) {
+      debugLog(DEBUG_LOG_AUTO,
+               "CONE DIAG PAUSE reason=%s ratio=%.6f zPos=%ld zMotor=%ld xPos=%ld xMotor=%ld zPulses=%lu xPulses=%lu",
+               coneRatio == 0 ? "ZERO_RATIO" : "MANUAL_MOVE", coneRatio,
+               z.pos, z.motorPos, x.pos, x.motorPos,
+               (unsigned long)(z.stepPulseCount - coneDiagStartZPulses),
+               (unsigned long)(x.stepPulseCount - coneDiagStartXPulses));
+      coneDiagActive = false;
+    }
     return;
   }
 
   float zToXRatio = -coneRatio / 2 / z.motorSteps * x.motorSteps / x.screwPitch * z.screwPitch * (auxForward ? 1 : -1);
   if (zToXRatio == 0) {
     return;
+  }
+
+  if (!coneDiagActive) {
+    coneDiagActive = true;
+    coneDiagLastLogMs = 0;
+    coneDiagStartZPulses = z.stepPulseCount;
+    coneDiagStartXPulses = x.stepPulseCount;
+    debugLog(DEBUG_LOG_AUTO,
+             "CONE DIAG START ratio=%.6f zToXRatio=%.9f pitchDupr=%ld auxForward=%d spindle=%ld zPos=%ld zMotor=%ld xPos=%ld xMotor=%ld zBacklash=%ld xBacklash=%ld",
+             coneRatio, zToXRatio, dupr, auxForward ? 1 : 0, spindlePosAvg,
+             z.pos, z.motorPos, x.pos, x.motorPos, z.backlashSteps, x.backlashSteps);
   }
 
   // TODO: calculate maximum speeds and accelerations to avoid potential desync.
@@ -10299,8 +11709,29 @@ void modeCone() {
     spindle = spindleMin;
   }
 
-  stepToContinuous(&z, posFromSpindle(&z, spindle, true));
-  stepToContinuous(&x, round(z.pos * zToXRatio));
+  const long zTarget = posFromSpindle(&z, spindle, true);
+  const long xTargetFromActualZ = round(z.pos * zToXRatio);
+
+  // Log at 100 ms intervals so the web debug buffer remains useful while
+  // still showing whether X follows the *actual* Z position during motion.
+  const unsigned long coneDiagNowMs = millis();
+  if (coneDiagLastLogMs == 0 || coneDiagNowMs - coneDiagLastLogMs >= 100) {
+    debugLog(DEBUG_LOG_MOTION,
+             "CONE DIAG RUN spindleRaw=%ld spindleClamped=%ld spindleMin=%ld spindleMax=%ld zTarget=%ld zPos=%ld zMotor=%ld zPending=%ld xTarget=%ld xPos=%ld xMotor=%ld xPending=%ld zPulses=%lu xPulses=%lu",
+             spindlePosAvg, spindle, spindleMin, spindleMax,
+             zTarget, z.pos, z.motorPos, z.pendingPos,
+             xTargetFromActualZ, x.pos, x.motorPos, x.pendingPos,
+             (unsigned long)(z.stepPulseCount - coneDiagStartZPulses),
+             (unsigned long)(x.stepPulseCount - coneDiagStartXPulses));
+    coneDiagLastLogMs = coneDiagNowMs;
+  }
+
+  // Call the same synchronized primitive used by the chamfer.  Native Cone
+  // uses machine zero as its local origin; its spindle value is already
+  // clamped above to both X and Z stops.
+  const long nativeZMin = z.rightStop == LONG_MIN ? LONG_MIN : z.rightStop;
+  const long nativeZMax = z.leftStop == LONG_MAX ? LONG_MAX : z.leftStop;
+  stepConeSynchronized(spindle, dupr, 0, 0, zToXRatio, nativeZMin, nativeZMax);
 }
 
 // Execute plunge/cut mode. X advances to each calculated depth and returns to
@@ -10386,6 +11817,7 @@ void modeCut() {
     case 2: // Finish at the exact physical motor target for this pass depth.
       x.speedMax = x.speedManualMove;
       if (x.motorPos == endMotorCut && x.pendingPos == 0) {
+        refreshCutFieldDisplaysAfterPass();
         opSubIndex = 3;
       } else if (x.pendingPos == 0) {
         stepToToolPosFromDirection(&x, endPos, cutSign, false);
@@ -10470,6 +11902,7 @@ void modeSlot() {
       z.speedMax = duPerSecondToStepsPerSecond(&z, dupr);
       stepToContinuous(&z, zEndPos);
       if (z.pos == zEndPos) {
+        refreshCutFieldDisplaysAfterPass();
         opSubIndex = 2;
       }
     } else if (opSubIndex == 2) {
@@ -10554,6 +11987,7 @@ void modeEllipse(Axis* main, Axis* aux) {
       stepToContinuous(main, mainPos);
       stepToContinuous(aux, auxPos);
       if (progress0to1 == 1 && main->pos == mainPos && aux->pos == auxPos) {
+        refreshCutFieldDisplaysAfterPass();
         opIndex++;
         opSubIndex = 0;
       }
@@ -10706,6 +12140,10 @@ void applySettings() {
     applyConeRatio();
     nextConeRatioFlag = false;
   }
+  if (nextChamferStartFlag) {
+    nextChamferStartFlag = false;
+    startChamferFromLoop();
+  }
   if (nextIsOnFlag) {
     setIsOnFromLoop(nextIsOn);
     nextIsOnFlag = false;
@@ -10791,6 +12229,10 @@ void setup() {
   savedMeasure = measure = pref.getInt(PREF_MEASURE);
   savedConeRatio = coneRatio = pref.getFloat(PREF_CONE_RATIO, coneRatio);
   savedTurnPasses = turnPasses = pref.getInt(PREF_TURN_PASSES, turnPasses);
+  savedFacePasses = facePasses = pref.getInt(PREF_FACE_PASSES, facePasses);
+  savedChamferSetupPasses = chamferSetupPasses = pref.getInt(PREF_CHAMFER_PASSES, chamferSetupPasses);
+  chamferSetupPasses = max(1, min((int)PASSES_MAX, chamferSetupPasses));
+  savedChamferSetupPasses = chamferSetupPasses;
   savedAuxForward = auxForward = pref.getBool(PREF_AUX_FORWARD, true);
   pref.end();
 
